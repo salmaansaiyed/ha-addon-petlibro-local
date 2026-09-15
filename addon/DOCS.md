@@ -4,6 +4,11 @@ The add-on generates go2rtc and AppDaemon configuration in `/data` each time a
 service starts. Users should edit options through Home Assistant rather than
 changing files inside the container.
 
+For a stock feeder, complete the repository's
+[unified installation flow](../docs/installation.md) before configuring these
+options. The installer provisions the feeder-side broker settings and State
+Agent that the add-on expects.
+
 ## Installation and updates
 
 The repository configuration points Supervisor at the prebuilt amd64 image:
@@ -133,19 +138,20 @@ is not used as feeder truth. If the API becomes unreachable, the controller
 keeps MQTT heartbeat handling active but blocks setting and plan writes until a
 fresh reconciliation succeeds.
 
-Install the matching State Agent 0.3.0 build from the repository's
-`feeder-state-agent/` component. It classifies fields as persistent,
+Install the matching State Agent build from the repository's
+[`state-agent/`](../state-agent/README.md) component. It classifies fields as persistent,
 effective-cached, or runtime; writable Home Assistant entities verify only the
 persistent field. Cached `enableX` bytes remain diagnostic even if their value
 temporarily differs from the user's persistent switch.
 
-State Agent OTA is optional and does not replace the initial manual feeder
-installation. After its runit supervisor is bootstrapped, enabling
+State Agent OTA is optional and does not replace its initial feeder
+installation through the [unified installer](../installer/README.md). After its
+runit supervisor is bootstrapped, enabling
 `state_agent_updates` adds a firmware Update entity and a separate **Check for
 State Agent Updates** button. The add-on validates signed HTTPS release metadata
 and uploads the artifact to the authenticated feeder API. It never asks the
 feeder to download a URL. See the [configuration reference](../docs/configuration.md#state-agent-updates)
-and [State Agent guide](../feeder-state-agent/README.md#bootstrap-and-signed-updates).
+and [State Agent guide](../state-agent/README.md#signed-updates).
 
 The nine **Feeding schedule** text entities accept flat JSON. Each document's
 `id` must match its displayed slot number and must already exist on the feeder.

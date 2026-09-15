@@ -44,7 +44,7 @@ users configure the same values in the ignored `docker/.env` file.
 | `verbose_logs`                         | `VERBOSE_LOGS`                         | Deprecated compatibility switch                               |
 | `enable_debug_dumps`                   | `ENABLE_DEBUG_DUMPS`                   | Decrypted protocol dump output                                |
 
-See [the add-on option guide](../petlibro-local/DOCS.md) for defaults and
+See [the add-on option guide](../addon/DOCS.md) for defaults and
 behavior.
 
 ## Generated files
@@ -84,7 +84,7 @@ agent. The renderer places it in the mode-0600 AppDaemon secrets file and
 references it with `!secret`; application logs never include it. The default
 request timeout is two seconds.
 
-The backend requires the tracked State Agent 0.3.0 schema. That agent rejects
+The backend requires the current tracked State Agent schema. That agent rejects
 any `state.bin` whose length is not exactly 236 bytes and labels decoded fields
 as `persistent`, `effective_cached`, or `runtime`. Only persistent fields can
 complete a setting verification; firmware-calculated cached enable flags and
@@ -92,9 +92,11 @@ runtime telemetry cannot.
 
 ### State Agent updates
 
-`state_agent_updates` is disabled by default. Enable it only after manually
-bootstrapping a compatible State Agent and its runit update supervisor on the
-feeder; the add-on cannot install that initial feeder-side service. The object
+`state_agent_updates` is disabled by default. Enable it only after bootstrapping
+a compatible State Agent and its runit update supervisor on the feeder. Use the
+[unified installer](../installer/README.md) or an authorized shell for a manual
+development installation; the running add-on's
+signed-update API cannot install that initial feeder-side service. The object
 has these fields:
 
 ```yaml
@@ -263,11 +265,13 @@ frontend integration.
 
 ## Feeder connectivity
 
-This backend does not onboard the feeder, rewrite DNS, or configure the feeder's
-factory MQTT account. The feeder must already be connected to Wi-Fi, its MQTT
-hostname must resolve or route to the local broker, and its own username and
-product-secret-based password must be provisioned in that broker. Do not enter
-the feeder credential as the backend's MQTT password.
+The normal running backend does not onboard the feeder or configure its factory
+MQTT account. The feeder must already be connected to Wi-Fi, its MQTT hostname
+must resolve or point to the local broker, and its own factory credential must
+be provisioned in that broker. Do not enter the feeder credential as the
+backend's MQTT password. The [unified installer](../installer/README.md)
+captures that CONNECT identity from an already claimed feeder and persists a
+direct local-broker endpoint before the backend takes over.
 
 The configured `mqtt_username` and `mqtt_password` authenticate AppDaemon. That
 account must be authorized to subscribe and publish on both the feeder's

@@ -3,6 +3,10 @@
 This fallback runs the same backend image with host networking and persistent
 data. It is intended for a Debian LXC on Proxmox or another trusted Linux host.
 
+Complete the feeder-side [unified installation](../docs/installation.md) first.
+This Compose deployment replaces only the Home Assistant add-on runtime; it
+does not replace the one-time feeder bootstrap.
+
 ## Proxmox / LXC prerequisites
 
 - amd64 Debian LXC with current security updates

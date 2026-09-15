@@ -1,224 +1,160 @@
-# Petlibro Local Backend
+# Petlibro Local
 
-Petlibro Local packages two working local-control components into one backend
-appliance:
+Petlibro Local brings supported Petlibro camera feeders onto a user-controlled
+LAN. It replaces the feeder's cloud MQTT connection with a local broker,
+publishes feeder controls and observations to Home Assistant, exposes the camera
+through go2rtc, and reads durable feeder configuration from a small on-device
+State Agent.
 
-- a patched go2rtc build for the PLAF203 camera's LAN/TUTK protocol;
-- the PLAF203 AppDaemon MQTT controller for feeder state and commands.
+The project currently targets the MQTT-based **PLAF203 / Granary Camera
+Feeder** family. It is independent community software and is not affiliated
+with Petlibro.
 
-The repository is installable as a Home Assistant add-on repository and can
-also run with Docker Compose in a Debian LXC or other Linux host. It is the
-canonical source for both imported backend components going forward.
+## Components
 
-This is the backend only. It does not include a HACS frontend integration,
-provision an MQTT broker or feeder account, or perform Petlibro cloud account
-setup. A separate HACS integration may later provide a polished Home Assistant
-frontend using the MQTT contract and go2rtc URLs exposed here.
+| Component | Responsibility |
+| --- | --- |
+| [`addon/`](addon/) | Home Assistant add-on image, configuration renderer, AppDaemon MQTT controller, and patched go2rtc camera backend |
+| [`state-agent/`](state-agent/) | Authenticated feeder-resident service that decodes persistent state and stages signed State Agent updates |
+| [`installer/`](installer/) | Guided no-UART bootstrap that migrates an already claimed stock feeder to the local architecture |
+| [`docker/`](docker/) | Docker Compose deployment for Linux hosts outside Home Assistant OS |
 
-## Support status
-
-- Device: Petlibro PLAF203 / MQTT-based PLAF203S controller behavior
-- Architecture: `amd64`
-- Camera: H.264 SD/HD, optional AAC support in the imported go2rtc component
-- Stage: experimental
-
-The camera implementation has been validated with hybrid ACK behavior,
-`send_delay_ctrl`, alternate 44-byte media headers, and delayed HD SPS
-transitions on tested firmware. A session can remain at 640x360 beyond the
-configured probe window before later producing 1920x1080 media.
-
-## Installation image
-
-Normal Home Assistant OS installs pull the prebuilt amd64 image
-`ghcr.io/tannerln7/ha-addon-petlibro-local:<version>`. Home Assistant therefore
-does not compile go2rtc or install AppDaemon dependencies on the appliance
-during installation. This is especially important for Raspberry Pi-class and
-other low-resource hosts, where a local image build can saturate the CPU and
-temporarily make Home Assistant unresponsive.
-
-The image is built with GitHub Actions from this repository. Local Docker and
-Supervisor builds remain available for development, but they are not the
-normal installation path.
-
-## Home Assistant OS installation
-
-Repository URL:
+The add-on is the long-running coordinator. The State Agent does not replace the
+OEM firmware: it runs beside it and exposes only narrowly defined local files.
+The installer is a one-time provisioning tool; after bootstrap, State Agent
+updates use the signed update path managed by the add-on.
 
 ```text
-https://github.com/tannerln7/ha-addon-petlibro-local
+Home Assistant ─┐
+                ├─ MQTT broker ───── OEM feeder firmware
+Petlibro add-on ┘        │                    │
+       │                 └─ feeder control   ├─ local state files
+       ├─ AppDaemon MQTT controller          └─ State Agent HTTP API
+       └─ patched go2rtc ───── LAN camera transport
 ```
 
-To install from a repository that Home Assistant can access:
+See [Architecture](docs/architecture.md) for the trust and state-ownership
+boundaries.
 
-1. Open **Settings → Apps → App store** in Home Assistant. Older releases label
-   this area **Settings → Add-ons → Add-on Store**.
-2. Open the three-dot menu, choose **Repositories**, and add the URL above.
-3. Install **Petlibro Local backend**.
-4. Configure the MQTT broker connection, feeder LAN subnet, and the bearer
-   token used by the feeder-side read-only state agent.
-5. Start the app, then reboot or power-cycle the feeder so its startup event is
-   visible to the discovery coordinator.
-6. Watch the app log until MQTT identity discovery, LAN address resolution, and
-   stream configuration complete.
+## Supported functionality
 
-For a local Supervisor development build, copy
-[`petlibro-local`](petlibro-local/) into `/addons/petlibro-local`, comment out
-the `image:` line in the copied `config.yaml`, reload the app store, and install
-it from **Local apps**. Do this only when testing image changes: the local build
-compiles Go and installs Python packages on the Home Assistant host and can peg
-the CPU until it finishes.
+- Home Assistant MQTT discovery for feeder settings, schedules, diagnostics,
+  feeding controls, and dispensing observations.
+- Fresh dispensing-state reconstruction after add-on or Home Assistant restart.
+- Persistent setting and feeding-plan verification against feeder-local state.
+- PLAF203 H.264 SD/HD camera streaming through RTSP, WebRTC, and the go2rtc web
+  interface; optional AAC is supported by the camera backend.
+- Automatic feeder serial, camera UID, and LAN-address discovery.
+- Signed, rollback-capable State Agent updates after initial bootstrap.
+- Optional key-only Dropbear installation during bootstrap.
 
-Serial, camera UID, and device IP are normally automatic. The backend reads the
-serial from `dl/PLAF203/<serial>/device/...`, reads the UID from the feeder's
-`DEVICE_START_EVENT`, and resolves the current address with the camera's
-UID-specific LAN probe over `lan_cidr`. Resolution tries a cached address and
-broadcast first, then known candidates, and performs at most one rate-limited
-subnet sweep under a single deadline. The probe completes the firmware's
-`LAN_SEARCH3(w3=1,w3=2)` and `KNOCK2` exchange and validates the UID and nonce in
-`KNOCK_RR2`. It persists this mapping in a private registry and creates one
-direct-IP go2rtc stream per discovered feeder. The optional `devices` list is
-an advanced fallback for manual overrides.
+Current release constraints:
 
-The default broker hostname is `core-mosquitto`. A broker must already exist,
-and it must authenticate both the backend identity configured here and the
-physical feeder's separately provisioned identity. See the
-[add-on option reference](petlibro-local/DOCS.md) for every setting.
+- Home Assistant add-on image: `amd64`.
+- Tested feeder family: PLAF203; firmware variants may differ.
+- The add-on remains marked `experimental` while hardware coverage and the
+  clean-stock bootstrap workflow receive broader validation.
 
-Persistent feeder settings and schedules require the read-only state agent to
-be running on the feeder. By default the add-on uses
-`http://<discovered-feeder-ip>:8765`; `petlibro_state_agent_url` can override
-that address or use an `{ip}` placeholder. The agent's bearer token belongs in
-`petlibro_state_agent_token`. If the API cannot be authenticated or reached,
-the add-on continues required MQTT protocol responses but deliberately blocks
-persistent setting and schedule writes rather than replaying stale Home
-Assistant state.
+## Requirements
 
-The feeder-resident State Agent is maintained as a first-class component in
-[`feeder-state-agent`](feeder-state-agent/). State Agent 0.3.0 replaces the
-older observational field map with the audited 236-byte state layout, exact
-47-byte plan records, and 51-slot pending feed-event queue. An older agent will
-not provide the fields required for safe persistent verification.
+- A PLAF203 already onboarded to Wi-Fi and claimed in the Petlibro app.
+- Home Assistant with an MQTT broker and MQTT integration, or a supported Linux
+  host for the Docker deployment.
+- A trusted LAN on which the feeder can reach the broker, Home Assistant, and
+  the temporary installer host.
+- A dedicated broker account for the backend. The installer captures the
+  feeder's separate factory MQTT identity so it can also be authorized.
+- A Linux setup machine for initial no-UART bootstrap.
 
-State Agent updates are optional and require an initial manual bootstrap on the
-feeder. Once the agent and its runit supervisor are installed, the add-on can
-check a configured signed HTTPS release, expose a Home Assistant firmware
-Update entity, and upload a verified artifact to the feeder. The feeder never
-downloads release files itself. See [configuration](docs/configuration.md#state-agent-updates)
-and the [State Agent bootstrap and release guide](feeder-state-agent/README.md#bootstrap-and-signed-updates).
+The feeder uses plaintext MQTT on tested firmware. Keep it on a trusted or
+isolated network and do not expose the broker, State Agent, go2rtc, or SSH
+listeners directly to the Internet.
 
-`mqtt_host` is only the address used by AppDaemon inside the add-on. It is not
-written to the feeder. Feeder endpoint persistence is disabled by default so a
-Home Assistant-only hostname cannot strand the physical device. The advanced
-`persist_feeder_mqtt` option requires a separate, validated LAN destination;
-see [configuration](docs/configuration.md#feeder-mqtt-endpoint-persistence)
-before enabling it.
+## Recommended installation
 
-The complete first-run sequence is:
+1. Add `https://github.com/tannerln7/ha-addon-petlibro-local` to the Home
+   Assistant app/add-on repository list and install **Petlibro Local backend**.
+2. Create a broker account for the add-on and enter it in the add-on
+   configuration. Leave the add-on stopped until bootstrap is ready.
+3. On a trusted Linux machine, build the ARM State Agent and run the guided
+   installer:
 
-1. Install and configure the MQTT broker, including the physical feeder's own
-   account.
-2. Add the local DNS redirects or routing needed for the feeder to reach that
-   broker.
-3. Install, configure, and start Petlibro Local Backend.
-4. Reboot or power-cycle the feeder after the backend is subscribed.
-5. The backend discovers the serial from the MQTT topic and the UID from the
-   startup event.
-6. It resolves the IP over `lan_cidr`, saves `/data/devices.json`, and generates
-   the direct-IP go2rtc stream.
-7. Open the generated stream to start the lazy camera producer.
+   ```bash
+   make -C state-agent arm-release
+   python3 installer/bootstrap.py configure --output bootstrap-config.json
+   python3 installer/bootstrap.py prepare --config bootstrap-config.json
+   python3 installer/bootstrap.py run --config bootstrap-config.json
+   ```
 
-On first feeder contact the controller reads `/v1/core` and mirrors that local
-feeder truth into Home Assistant before accepting persistent writes. Home
-Assistant entities are controls and displays, never a recovery source for
-feeder settings or schedules.
+4. The first `run` may stop after capturing the feeder's factory MQTT
+   credentials. Add that account and its topic ACL to the local broker, then run
+   the same command again.
+5. Merge the generated `addon-options.patch.json` into the add-on configuration,
+   start the add-on, and verify State Agent reconciliation and camera discovery.
 
-If the feeder was rebooted before the backend started, reboot it once more; the
-UID startup event is not assumed to be retained by the broker.
+This is the intended installation architecture, but the complete production
+payload has not yet been fault-injected on a clean stock feeder across all
+supported firmware variants. Read the installer's safety and recovery notes
+before proceeding. The process intentionally preserves an OEM firmware donor
+slot until installation succeeds and restores normal OEM firmware to OTA1.
 
-The backend publishes retained discovery progress under
-`petlibro_local/<product>/<serial>/discovery/state` and retained camera runtime
-state under `petlibro_local/<product>/<serial>/camera`. See the
-[MQTT camera contract](docs/mqtt-camera-contract.md) for the versioned JSON
-schema and availability behavior.
+See the [complete installation guide](docs/installation.md) and the
+[installer reference](installer/README.md) before modifying a feeder.
 
-Operational logs default to `log_level: info`. Use `debug` for bounded resolver,
-registry, and camera summaries; use `trace` only for a short protocol
-reproduction because it includes high-volume MQTT and camera packet details.
-`enable_debug_dumps` is independent and writes sensitive decrypted traffic.
+## Runtime endpoints
 
-## Endpoints
+With default host networking:
 
-With the default configuration and host networking:
+| Service | Default endpoint |
+| --- | --- |
+| go2rtc web/API | `http://HOME_ASSISTANT_HOST:1984/` |
+| RTSP | `rtsp://HOME_ASSISTANT_HOST:8554/petlibro_plaf203_<serial>` |
+| WebRTC | TCP and UDP port `8555` |
+| State Agent | `http://FEEDER_IP:8765/` (bearer token and source-IP restricted) |
 
-| Service          | URL or port                                                 |
-| ---------------- | ----------------------------------------------------------- |
-| go2rtc web/API   | `http://HOME_ASSISTANT_HOST:1984/`                          |
-| RTSP             | `rtsp://HOME_ASSISTANT_HOST:8554/petlibro_plaf203_<serial>` |
-| WebRTC transport | TCP and UDP `8555`                                          |
-
-The generated camera source is equivalent to:
-
-```yaml
-streams:
-  petlibro_plaf203_your_device_serial: petlibro://192.168.1.100?uid=YOUR_DEVICE_UID&quality=hd&ack=hybrid&send_delay_ctrl=1&hd_probe_wait_ms=15000
-```
-
-This generated URL is illustrative; users do not normally enter these values.
-
-## Docker / Debian LXC fallback
-
-```bash
-cd docker
-cp .env.example .env
-# Edit .env with local values.
-docker compose up -d --build
-docker compose logs -f
-```
-
-Docker Compose uses host networking and persists generated configuration and
-debug dumps under `docker/data/`. It intentionally builds from the local source
-tree; `GO_BUILD_PROCS` defaults to `2` to reduce compiler pressure. See the
-[Docker and Proxmox guide](docker/README.md) for prerequisites and operations.
-
-## Security
-
-- Keep MQTT credentials, feeder serials, camera UIDs, product secrets, and raw
-  protocol dumps out of Git and issue reports.
-- Treat the feeder state-agent bearer token as a secret. The renderer stores it
-  in a mode-0600 AppDaemon secrets file; do not include it in URLs or logs.
-- The feeder's product-secret-based MQTT credential belongs in the external
-  broker's device account. This backend does not provision that account;
-  `mqtt_username` and `mqtt_password` authenticate AppDaemon itself.
-- go2rtc's web/API and RTSP endpoints have no authentication in the generated
-  configuration. Host networking makes them reachable from the host network;
-  use a trusted VLAN and firewall access appropriately.
-- The feeder's MQTT transport is plaintext on tested firmware. Keep feeder and
-  broker traffic on a trusted or isolated network.
-- State Agent OTA accepts only a detached Ed25519 signature over the exact
-  release manifest bytes, a matching SHA-256 artifact, and a newer supported
-  ARMv7 binary. Existing bearer-token and source-IP controls still protect the
-  feeder API; OTA does not add a second token.
-- Debug dumps contain decrypted protocol traffic. Enable them only while
-  diagnosing a problem and delete them afterward.
+Camera sessions are lazy and begin when a consumer opens the generated stream.
 
 ## Documentation
 
-- [Architecture](docs/architecture.md)
-- [Configuration](docs/configuration.md)
-- [MQTT camera contract](docs/mqtt-camera-contract.md)
-- [Troubleshooting](docs/troubleshooting.md)
-- [Development](DEVELOPMENT.md)
-- [Feeder state agent](feeder-state-agent/README.md)
-- [Add-on options](petlibro-local/DOCS.md)
-- [Docker / LXC deployment](docker/README.md)
-- [Release history](petlibro-local/CHANGELOG.md)
+### Users and operators
 
-The imported components retain their own documentation and licenses under
-[`petlibro-local/go2rtc`](petlibro-local/go2rtc/) and
-[`petlibro-local/appdaemon`](petlibro-local/appdaemon/).
+- [Installation](docs/installation.md)
+- [Add-on configuration](addon/DOCS.md)
+- [Configuration internals and advanced options](docs/configuration.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Docker / LXC deployment](docker/README.md)
+- [Release history](addon/CHANGELOG.md)
+
+### Components and interfaces
+
+- [Home Assistant add-on](addon/README.md)
+- [State Agent](state-agent/README.md)
+- [Installer/bootstrap](installer/README.md)
+- [MQTT camera contract](docs/mqtt-camera-contract.md)
+
+### Development
+
+- [Architecture](docs/architecture.md)
+- [Development guide](docs/development.md)
+- [Contributing](CONTRIBUTING.md)
+- [Camera backend development](docs/camera-development.md)
+- [Camera diagnostics](docs/camera-debugging.md)
+- [Sanitized firmware 3.1.48 MQTT protocol reference](docs/protocol/mqtt-firmware-3.1.48.md)
+
+## Security and privacy
+
+Never commit or publish feeder MQTT credentials, State Agent tokens, private
+signing keys, SSH private keys, serials, camera UIDs, raw packet captures, or
+decrypted protocol dumps. Generated installer output is mode-restricted and
+ignored by Git, but it remains sensitive.
+
+The State Agent update design uses a compiled Ed25519 trust anchor, a detached
+signature over exact manifest bytes, artifact hash/size verification, and a
+fixed-path feeder-side transaction with rollback. The one-time OEM bootstrap is
+a separate trust boundary and should run only on a trusted LAN.
 
 ## License
 
-Repository packaging code and documentation use the [MIT License](LICENSE).
-Imported go2rtc and PLAF203 sources retain the licenses included in their
-respective component directories.
+Repository packaging and documentation use the [MIT License](LICENSE). Bundled
+go2rtc and the original AppDaemon controller retain the license files in their
+component directories.

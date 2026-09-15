@@ -229,7 +229,7 @@ length, and rejection reason. A valid extended packet is marked received for
 ACK purposes before assembly decisions, preventing parser rejection from
 creating an artificial ACK hole.
 
-See the [development guide](DEVELOPMENT.md#media-header-layouts) for the current
+See the [development guide](camera-development.md#media-header-layouts) for the current
 offset map and naming rules.
 
 ## Preparing a useful report

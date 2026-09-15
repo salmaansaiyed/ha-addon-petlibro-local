@@ -1,7 +1,7 @@
 # Petlibro go2rtc
 
 > This source snapshot is maintained as part of the canonical Petlibro Local
-> backend repository under `petlibro-local/go2rtc`. Historical standalone forks
+> backend repository under `addon/go2rtc`. Historical standalone forks
 > are references only; make future Petlibro changes here.
 
 This repository is a fork of [go2rtc](https://github.com/AlexxIT/go2rtc) with a
@@ -29,7 +29,7 @@ depend on its vendor cloud connection for firmware-side session authorization.
 From the root of the Petlibro Local repository:
 
 ```bash
-cd petlibro-local/go2rtc
+cd addon/go2rtc
 go build -o go2rtc .
 ```
 
@@ -101,29 +101,26 @@ An HD camera may initially send a 640x360 SPS before switching to 1920x1080.
 The example's `hd_probe_wait_ms=15000` gives the producer a bounded window to
 advertise the later HD SPS instead of the startup resolution.
 
-## Local Docker build
+## Build
 
-This fork is not the same as the upstream `alexxit/go2rtc` container. Build the
-image from this checkout so the Petlibro source is included:
+Build the fork directly from this directory:
 
 ```bash
-docker build -t petlibro-go2rtc -f docker/Dockerfile .
-docker run --rm --network host \
-  -v "$(pwd)/go2rtc.yaml:/config/go2rtc.yaml:ro" \
-  petlibro-go2rtc
+go test ./pkg/petlibro ./cmd/petlibro-resolve
+go build -o /tmp/petlibro-go2rtc .
 ```
 
-Host networking is the simplest Linux setup for camera discovery and go2rtc's
-UDP services. If you use an isolated container network, configure a fixed camera
-IP and explicitly publish the go2rtc ports you need.
+For a supported container containing both the camera service and PLAF203
+controller, build the repository's [Home Assistant add-on](../README.md) or use
+the root [`docker/`](../../docker/README.md) Compose workflow.
 
 ## Troubleshooting and development
 
-- [Petlibro debugging guide](docs/PETLIBRO_DEBUGGING.md) — health counters,
+- [Petlibro debugging guide](../../docs/camera-debugging.md) — health counters,
   trace controls, plaintext captures, replay, and common failure modes
-- [Development guide](docs/DEVELOPMENT.md) — package architecture, protocol
+- [Development guide](../../docs/camera-development.md) — package architecture, protocol
   invariants, tests, build checks, and live-test workflow
-- [Contributing](CONTRIBUTING.md) — useful issue evidence, privacy rules, and
+- [Contributing](../../CONTRIBUTING.md) — useful issue evidence, privacy rules, and
   change-submission checklist
 - [Upstream go2rtc documentation](https://github.com/AlexxIT/go2rtc#readme) —
   general output protocols, APIs, transcoding, and integrations

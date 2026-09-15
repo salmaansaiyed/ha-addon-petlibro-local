@@ -2,32 +2,32 @@
 
 This guide covers the Petlibro-specific parts of the go2rtc fork. For general
 go2rtc architecture and APIs, use the existing module documentation under
-[`internal/`](../internal/README.md) and package documentation under
-[`pkg/`](../pkg/README.md).
+[`internal/`](../addon/go2rtc/internal/README.md) and package documentation under
+[`pkg/`](../addon/go2rtc/pkg/README.md).
 
 ## Toolchain
 
-- Go 1.24 or newer, as declared by [`go.mod`](../go.mod)
+- Go 1.24 or newer, as declared by [`go.mod`](../addon/go2rtc/go.mod)
 - Git
 - FFmpeg/ffprobe for optional RTSP verification
 - Docker only when validating the local container image
 
-Work from the repository root for all commands below.
+Run the Go commands below from `addon/go2rtc`.
 
 ## Source layout
 
 | Path | Responsibility |
 | --- | --- |
-| [`main.go`](../main.go) | Registers the Petlibro module in the standalone binary |
-| [`internal/petlibro/`](../internal/petlibro/) | Connects the `petlibro://` URL handler to go2rtc logging and stream routing |
-| [`pkg/petlibro/client.go`](../pkg/petlibro/client.go) | Client state, URL parsing, socket setup, counters, and plaintext C2D writes |
-| [`pkg/petlibro/handshake.go`](../pkg/petlibro/handshake.go) | LAN discovery session handshake and login |
-| [`pkg/petlibro/bootstrap.go`](../pkg/petlibro/bootstrap.go) | IOCtrl ordering, stream control, AV-ready state, and initial sequence cursors |
-| [`pkg/petlibro/recv.go`](../pkg/petlibro/recv.go) | Datagram receive loop, receive-side ACK tracking, maintenance ACKs, and stats |
-| [`pkg/petlibro/assembler.go`](../pkg/petlibro/assembler.go) | Media-header decoding, sequence reordering, frame assembly, loss accounting, and SPS logging |
-| [`pkg/petlibro/producer.go`](../pkg/petlibro/producer.go) | Codec probe, optional HD stabilization, and conversion to go2rtc media packets |
-| [`pkg/petlibro/templates.go`](../pkg/petlibro/templates.go) | Wire constants and packet builders |
-| [`pkg/petlibro/*_test.go`](../pkg/petlibro/) | Unit, regression, dump-summary, and offline replay tests |
+| [`main.go`](../addon/go2rtc/main.go) | Registers the Petlibro module in the standalone binary |
+| [`internal/petlibro/`](../addon/go2rtc/internal/petlibro/) | Connects the `petlibro://` URL handler to go2rtc logging and stream routing |
+| [`pkg/petlibro/client.go`](../addon/go2rtc/pkg/petlibro/client.go) | Client state, URL parsing, socket setup, counters, and plaintext C2D writes |
+| [`pkg/petlibro/handshake.go`](../addon/go2rtc/pkg/petlibro/handshake.go) | LAN discovery session handshake and login |
+| [`pkg/petlibro/bootstrap.go`](../addon/go2rtc/pkg/petlibro/bootstrap.go) | IOCtrl ordering, stream control, AV-ready state, and initial sequence cursors |
+| [`pkg/petlibro/recv.go`](../addon/go2rtc/pkg/petlibro/recv.go) | Datagram receive loop, receive-side ACK tracking, maintenance ACKs, and stats |
+| [`pkg/petlibro/assembler.go`](../addon/go2rtc/pkg/petlibro/assembler.go) | Media-header decoding, sequence reordering, frame assembly, loss accounting, and SPS logging |
+| [`pkg/petlibro/producer.go`](../addon/go2rtc/pkg/petlibro/producer.go) | Codec probe, optional HD stabilization, and conversion to go2rtc media packets |
+| [`pkg/petlibro/templates.go`](../addon/go2rtc/pkg/petlibro/templates.go) | Wire constants and packet builders |
+| [`pkg/petlibro/*_test.go`](../addon/go2rtc/pkg/petlibro/) | Unit, regression, dump-summary, and offline replay tests |
 
 The high-level receive path is:
 
@@ -119,7 +119,7 @@ go test ./pkg/petlibro -run 'TestBootstrap|TestStreamCtrl|TestParseHDProbe' -cou
 
 Dump-backed tests intentionally skip when their environment variable is unset,
 so the normal package suite never requires a live camera or local capture.
-See the [debugging guide](PETLIBRO_DEBUGGING.md#offline-replay-and-summaries) for
+See the [debugging guide](camera-debugging.md#offline-replay-and-summaries) for
 their inputs.
 
 ## Build checks

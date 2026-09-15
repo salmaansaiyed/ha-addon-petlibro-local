@@ -40,7 +40,7 @@ No credentials, personal identifiers, or camera authorization data are
 reproduced here. The source capture artifacts contained a real MQTT CONNECT
 password and device/network identifiers, so they remain local and are excluded
 from version control. Tests use the sanitized synthetic fixture in
-`tests/fixtures/protocol_3_1_48.sample.jsonl`.
+`addon/appdaemon/tests/fixtures/protocol_3_1_48.sample.jsonl`.
 
 ## Local capture files inspected
 
