@@ -12,7 +12,7 @@
   "bootstrap_mqtt_port": 1884,
   "bootstrap_http_port": 18080,
   "state_agent_manifest_url": "",
-  "state_agent_dir": "./feeder-state-agent",
+  "state_agent_dir": "./state-agent",
   "dropbear_dir": "",
   "ssh_public_key": "",
   "target_software_version": "",

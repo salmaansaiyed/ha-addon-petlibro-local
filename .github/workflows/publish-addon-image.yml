@@ -6,8 +6,8 @@ on:
       - main
     paths:
       - .github/workflows/publish-addon-image.yml
-      - petlibro-local/**
-      - feeder-state-agent/release-public-key.hex
+      - addon/**
+      - state-agent/release-public-key.hex
   workflow_dispatch:
 
 permissions:
@@ -39,7 +39,7 @@ jobs:
         id: info
         uses: home-assistant/actions/helpers/info@a7c616ce81ccda50150bf1595786c71b1883fabb # master
         with:
-          path: ./petlibro-local
+          path: ./addon
 
       - name: Normalize image coordinates
         id: normalize
@@ -112,7 +112,7 @@ jobs:
           arch: ${{ matrix.arch }}
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}
           context: .
-          file: ./petlibro-local/Dockerfile
+          file: ./addon/Dockerfile
           image: ${{ matrix.image }}
           image-tags: |
             ${{ needs.prepare.outputs.version }}

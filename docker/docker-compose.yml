@@ -2,7 +2,7 @@ services:
   petlibro-local:
     build:
       context: ..
-      dockerfile: petlibro-local/Dockerfile
+      dockerfile: addon/Dockerfile
       args:
         BUILD_ARCH: amd64
         BUILD_VERSION: local

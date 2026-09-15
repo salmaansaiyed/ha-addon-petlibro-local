@@ -6,44 +6,39 @@ python_bin="${PYTHON_BIN:-python3}"
 
 cd "${repo_root}"
 
-"${python_bin}" -m unittest discover -s tests -p 'test_render_config.py' -v
-"${python_bin}" -m py_compile \
-    petlibro-local/render_config.py \
-    petlibro-local/appdaemon/src/backend.py \
-    petlibro-local/appdaemon/src/camera_metadata.py \
-    petlibro-local/appdaemon/src/commands.py \
-    petlibro-local/appdaemon/src/device_discovery.py \
-    petlibro-local/appdaemon/src/dispensing_status.py \
-    petlibro-local/appdaemon/src/feed_plans.py \
-    petlibro-local/appdaemon/src/feeder_mqtt_validation.py \
-    petlibro-local/appdaemon/src/ha_entities.py \
-    petlibro-local/appdaemon/src/mqtt_client.py \
-    petlibro-local/appdaemon/src/petlibro_logging.py \
-    petlibro-local/appdaemon/src/plaf203.py \
-    petlibro-local/appdaemon/src/protocol.py \
-    petlibro-local/appdaemon/src/settings_map.py \
-    petlibro-local/appdaemon/src/state_agent.py \
-    petlibro-local/appdaemon/src/state_coordinator.py \
-    petlibro-local/appdaemon/src/storage.py \
-    petlibro-local/appdaemon/src/telemetry.py \
-    petlibro-local/appdaemon/tests/test_camera_metadata.py \
-    petlibro-local/appdaemon/tests/test_device_discovery.py \
-    petlibro-local/appdaemon/tests/test_feeder_mqtt_validation.py \
-    tests/test_render_config.py
+# State Agent integration tests start loopback HTTP servers. Never send their
+# bearer-authenticated probes through an ambient development/CI proxy.
+export NO_PROXY="127.0.0.1,localhost${NO_PROXY:+,${NO_PROXY}}"
+export no_proxy="127.0.0.1,localhost${no_proxy:+,${no_proxy}}"
+
+mapfile -t python_sources < <(
+    find addon installer state-agent/tests \
+        -type f -name '*.py' \
+        -not -path '*/__pycache__/*' \
+        -print | sort
+)
+"${python_bin}" -m py_compile "${python_sources[@]}"
+"${python_bin}" scripts/check-doc-links.py
+
+"${python_bin}" -m pytest \
+    addon/tests \
+    state-agent/tests \
+    installer/tests \
+    -q
 
 if "${python_bin}" -c 'import appdaemon' >/dev/null 2>&1; then
-    "${python_bin}" -m pytest tests petlibro-local/appdaemon/tests -q
+    "${python_bin}" -m pytest addon/appdaemon/tests -q
 else
-    printf 'Skipping AppDaemon controller tests: install petlibro-local/appdaemon/requirements-dev.txt\n'
+    printf 'Skipping AppDaemon controller tests: install addon/appdaemon/requirements-dev.txt\n'
 fi
 
-make -C feeder-state-agent clean all
+make -C state-agent clean all
 
 if command -v arm-linux-gnueabihf-gcc >/dev/null 2>&1; then
-    make -C feeder-state-agent clean arm-release
+    make -C state-agent clean arm-release
     for binary in \
-        feeder-state-agent/plaf203-state-agent \
-        feeder-state-agent/plaf203-update-fs; do
+        state-agent/plaf203-state-agent \
+        state-agent/plaf203-update-fs; do
         file "${binary}" | grep -Eq 'ELF 32-bit.*ARM.*statically linked'
         readelf -h "${binary}" | grep -Eq 'Class:[[:space:]]+ELF32'
         readelf -h "${binary}" | grep -Eq 'Machine:[[:space:]]+ARM'
@@ -60,7 +55,7 @@ else
 fi
 
 (
-    cd petlibro-local/go2rtc
+    cd addon/go2rtc
     go test ./pkg/petlibro -count=1
     go test -race ./pkg/petlibro -count=1
     go test ./cmd/petlibro-resolve -count=1
@@ -72,25 +67,25 @@ fi
 docker compose --env-file docker/.env.example \
     -f docker/docker-compose.yml config --quiet
 
-for script in scripts/*.sh petlibro-local/run.sh petlibro-local/rootfs/etc/services.d/*/run; do
+for script in scripts/*.sh addon/run.sh addon/rootfs/etc/services.d/*/run; do
     bash -n "${script}"
 done
 
 for script in \
-    feeder-state-agent/app_start_snippet.sh \
-    feeder-state-agent/runit/*/run \
-    feeder-state-agent/runit/plaf203-update-supervisor/supervisor.sh; do
+    state-agent/app_start_snippet.sh \
+    state-agent/runit/*/run \
+    state-agent/runit/plaf203-update-supervisor/supervisor.sh; do
     /bin/sh -n "${script}"
 done
 
 if command -v shellcheck >/dev/null 2>&1; then
     shellcheck \
         scripts/*.sh \
-        feeder-state-agent/app_start_snippet.sh \
-        feeder-state-agent/runit/*/run \
-        feeder-state-agent/runit/plaf203-update-supervisor/supervisor.sh \
-        petlibro-local/run.sh \
-        petlibro-local/rootfs/etc/services.d/*/run
+        state-agent/app_start_snippet.sh \
+        state-agent/runit/*/run \
+        state-agent/runit/plaf203-update-supervisor/supervisor.sh \
+        addon/run.sh \
+        addon/rootfs/etc/services.d/*/run
 fi
 
 git diff --check

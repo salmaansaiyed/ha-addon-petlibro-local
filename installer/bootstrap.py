@@ -32,7 +32,7 @@ except ImportError:  # direct execution from installer
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_STATE_AGENT_DIR = REPO_ROOT / "feeder-state-agent"
+DEFAULT_STATE_AGENT_DIR = REPO_ROOT / "state-agent"
 DIRECT_URL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 

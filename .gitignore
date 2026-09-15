@@ -34,8 +34,10 @@ tmp/
 *.dat
 *.tar.gz
 docker/data/
-/feeder-state-agent/plaf203-state-agent
-/feeder-state-agent/plaf203-update-fs
+/state-agent/plaf203-state-agent
+/state-agent/plaf203-update-fs
+/addon/go2rtc/go2rtc
+/addon/go2rtc/petlibro-resolve
 
 # Local configuration and secrets
 **/go2rtc.yaml
@@ -45,13 +47,6 @@ docker/data/
 capture/
 *.pcap
 *.pcapng
-
-# Local editor and AI assistant configuration
-.github/copilot-instructions.md
-.vscode/*
-/docs/ghidra-map.md
-
-# Generated installer configuration, payloads, and credentials
 /bootstrap-config.json
 /plaf203-bootstrap-output/
 /installer/bootstrap-config.json
@@ -59,3 +54,18 @@ capture/
 *.pem
 *.p12
 *.pfx
+
+# Reverse engineering and device-local evidence
+/captures/
+/research/
+/reverse-engineering/
+*.pcap.zst
+*.pcapng.zst
+*.gpr
+*.rep/
+
+# Local editor and AI assistant configuration
+.github/copilot-instructions.md
+.vscode/*
+.idea/
+/docs/ghidra-map.md
