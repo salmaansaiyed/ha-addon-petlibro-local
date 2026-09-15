@@ -50,3 +50,12 @@ capture/
 .github/copilot-instructions.md
 .vscode/*
 /docs/ghidra-map.md
+
+# Generated installer configuration, payloads, and credentials
+/bootstrap-config.json
+/plaf203-bootstrap-output/
+/installer/bootstrap-config.json
+/installer/plaf203-bootstrap-output/
+*.pem
+*.p12
+*.pfx
