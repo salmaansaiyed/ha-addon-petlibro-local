@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.7
+## 0.3.8
 
 - Add the guided, no-UART stock-feeder installer with a single TUI workflow,
   repository-local build workspace, automatic dependency preflight, and
