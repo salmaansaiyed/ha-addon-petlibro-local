@@ -43,11 +43,9 @@ except ImportError:  # pragma: no cover - direct script execution support
 
 
 MAX_PACKET_BYTES = 256 * 1024
-EVENT_COMMANDS_REQUIRING_RESPONSE = {
+EVENT_COMMANDS_WITH_SIMPLE_SUCCESS_RESPONSE = {
     "ATTR_PUSH_EVENT",
     "DEVICE_START_EVENT",
-    "GET_FEEDING_PLAN_EVENT",
-    "GRAIN_OUTPUT_EVENT",
 }
 
 
@@ -322,7 +320,10 @@ class BootstrapMqttServer(socketserver.ThreadingTCPServer):
                 build_noncalibrating_ntp_response(int(time.time() * 1000)),
             )
 
-        if topic.endswith("/device/event/post") and command in EVENT_COMMANDS_REQUIRING_RESPONSE:
+        if (
+            topic.endswith("/device/event/post")
+            and command in EVENT_COMMANDS_WITH_SIMPLE_SUCCESS_RESPONSE
+        ):
             msg_id = value.get("msgId")
             if isinstance(msg_id, str) and msg_id:
                 response_topic = topic[:-4] + "sub"
@@ -336,6 +337,40 @@ class BootstrapMqttServer(socketserver.ThreadingTCPServer):
                     separators=(",", ":"),
                 ).encode("ascii")
                 self._queue_or_publish_application_response(session, response_topic, response)
+
+        if topic.endswith("/device/event/post") and command == "GRAIN_OUTPUT_EVENT":
+            msg_id = value.get("msgId")
+            exec_step = value.get("execStep")
+            if (
+                isinstance(msg_id, str)
+                and msg_id
+                and isinstance(exec_step, str)
+                and exec_step
+            ):
+                response_topic = topic[:-4] + "sub"
+                response = json.dumps(
+                    {
+                        "cmd": command,
+                        "ts": int(time.time() * 1000),
+                        "msgId": msg_id,
+                        "code": 0,
+                        "execStep": exec_step,
+                    },
+                    separators=(",", ":"),
+                ).encode("ascii")
+                self._queue_or_publish_application_response(
+                    session, response_topic, response
+                )
+
+        # GET_FEEDING_PLAN_EVENT asks the server for its authoritative complete
+        # schedule. A stock feeder has no State Agent yet, so the bootstrap
+        # broker cannot answer it truthfully. In particular, a code-0 response
+        # containing an empty plans array replaces the feeder's persisted
+        # schedule. Omitting plans is non-destructive, but silence avoids
+        # claiming application-level success. The MQTT handler still PUBACKs
+        # the feeder's QoS-1 PUBLISH,
+        # but intentionally sends no application response. Once bootstrap has
+        # completed, the add-on answers from fresh State Agent truth.
 
         if topic.endswith("/device/event/post") and command == "DEVICE_START_EVENT":
             software_version = value.get("softwareVersion")

@@ -192,14 +192,23 @@ Once broker proof succeeds, the installer:
 2. serves one randomized URL only to the configured feeder;
 3. waits for download, PUBACK, and the OEM terminal result;
 4. runs the one-time payload from the inactive slot;
-5. installs the State Agent and key-only Dropbear;
-6. restores both OTA slots to OEM firmware and selects OTA1;
-7. observes the restored OEM startup event;
-8. subscribes to the feeder's exact heartbeat topic with the configured
+5. preserves the first feeder-local settings and feeding-plan snapshot under
+   `/user/data/plaf203-bootstrap/preinstall-state/`;
+6. installs the State Agent and key-only Dropbear;
+7. restores both OTA slots to OEM firmware and selects OTA1;
+8. observes the restored OEM startup event;
+9. subscribes to the feeder's exact heartbeat topic with the configured
    backend broker account, redirects OEM MQTT to the final broker, and waits
    for a new non-retained heartbeat; and
-9. verifies State Agent health when the setup host has the allowlisted Home
+10. verifies State Agent health when the setup host has the allowlisted Home
    Assistant source IP.
+
+During temporary-broker startup, the feeder may request the server's complete
+feeding-plan collection. The installer acknowledges MQTT delivery but does not
+send an application-level success because it has no authoritative plan source
+on a stock feeder. The production add-on answers from fresh State Agent truth
+after handoff, or leaves the request unanswered if that truth is unavailable.
+This preserves schedules across bootstrap and transient State Agent failures.
 
 Final heartbeat verification is best-effort. A broker connection,
 authentication, subscription, or heartbeat timeout produces a warning and the

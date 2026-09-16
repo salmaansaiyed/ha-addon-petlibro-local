@@ -197,6 +197,60 @@ class BootstrapMqttServerTests(unittest.TestCase):
         self.server._subscriptions_changed(session)  # type: ignore[arg-type]
         self.assertEqual(sub, session.published[0][0])
 
+    def test_plan_request_never_gets_fabricated_success_response(self) -> None:
+        post = "dl/PLAF203/SERIAL/device/event/post"
+        sub = "dl/PLAF203/SERIAL/device/event/sub"
+        session = FakeSession({sub})
+
+        self.server._record_publication(  # type: ignore[arg-type]
+            session,
+            post,
+            b'{"cmd":"GET_FEEDING_PLAN_EVENT","msgId":"plans-1","ts":123}',
+        )
+
+        self.assertEqual([], session.published)
+        self.assertEqual(1, len(self.server.publications))
+        self.assertEqual(post, self.server.publications[0][0])
+
+    def test_grain_event_response_echoes_exec_step(self) -> None:
+        post = "dl/PLAF203/SERIAL/device/event/post"
+        sub = "dl/PLAF203/SERIAL/device/event/sub"
+        session = FakeSession({sub})
+
+        self.server._record_publication(  # type: ignore[arg-type]
+            session,
+            post,
+            b'{"cmd":"GRAIN_OUTPUT_EVENT","msgId":"feed-1",'
+            b'"execStep":"GRAIN_START","ts":123}',
+        )
+
+        self.assertEqual(1, len(session.published))
+        topic, response, _packet_id, qos = session.published[0]
+        self.assertEqual(sub, topic)
+        self.assertEqual(0, qos)
+        self.assertEqual(
+            {
+                "cmd": "GRAIN_OUTPUT_EVENT",
+                "msgId": "feed-1",
+                "code": 0,
+                "execStep": "GRAIN_START",
+            },
+            {key: value for key, value in json.loads(response).items() if key != "ts"},
+        )
+
+    def test_malformed_grain_event_does_not_get_success_response(self) -> None:
+        post = "dl/PLAF203/SERIAL/device/event/post"
+        sub = "dl/PLAF203/SERIAL/device/event/sub"
+        session = FakeSession({sub})
+
+        self.server._record_publication(  # type: ignore[arg-type]
+            session,
+            post,
+            b'{"cmd":"GRAIN_OUTPUT_EVENT","msgId":"feed-1","ts":123}',
+        )
+
+        self.assertEqual([], session.published)
+
     def test_ntp_request_gets_noncalibrating_stock_shaped_response(self) -> None:
         post = "dl/PLAF203/SERIAL/device/ntp/post"
         sub = "dl/PLAF203/SERIAL/device/ntp/sub"

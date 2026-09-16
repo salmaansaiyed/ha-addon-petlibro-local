@@ -170,6 +170,19 @@ verifies the donor over the temporary payload, restores both slots to OEM
 firmware, writes a minimal startup script, and selects OTA1. A handled failure
 reselects the untouched donor. Do not remove feeder power during this window.
 
+Before changing startup or sidecar services, the payload saves the first
+feeder-local `attr/` and `feed_plan/` trees under the mode-restricted
+`/user/data/plaf203-bootstrap/preinstall-state/` directory. A retry does not
+replace a completed snapshot. This is a recovery copy, not a second live state
+source; normal operation and reconciliation continue to use the OEM files.
+
+The temporary broker never claims to have authoritative feeding plans. It
+PUBACKs the feeder's `GET_FEEDING_PLAN_EVENT` delivery but sends no application
+response; after installation, the add-on answers that request only when a
+fresh State Agent snapshot is available. This prevents bootstrap or a failed
+handoff read from replacing an existing schedule with fabricated empty plan
+data.
+
 The payload intentionally excludes telnet, packet capture, boot timing, live
 firmware logging, debug mounts, and other research tooling.
 

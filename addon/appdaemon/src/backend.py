@@ -412,9 +412,19 @@ class Backend:
         self,
         request_message: GetFeedingPlanEventIn,
         plans: tuple[AgentFeederPlan, ...] | None,
-    ) -> None:
+    ) -> bool:
+        # AF203_FW ignores the response code and treats every present `plans`
+        # array as authoritative. In particular, an error response containing
+        # `plans: []` clears the persistent schedule. Silence is the only safe
+        # response while feeder-local truth is unavailable.
+        if plans is None:
+            self.logger.warning(
+                "feeding-plan request left unanswered because fresh feeder truth is unavailable"
+            )
+            return False
         response = build_plan_response(request_message, plans)
         self.client.get_feeding_plan_event_send(response)
+        return True
 
     def device_config_sync(
         self,
@@ -813,9 +823,8 @@ class Backend:
             self.feeding_plan_request_callback(get_feeding_plan_event_in)
         else:
             self.logger.error(
-                "feeding-plan truth unavailable; returning protocol error"
+                "feeding-plan truth unavailable; request left unanswered"
             )
-            self.feeding_plan_request_respond(get_feeding_plan_event_in, None)
 
         self._device_timestamp_sync_drift_check_and_adjust(
             get_feeding_plan_event_in.timestamp

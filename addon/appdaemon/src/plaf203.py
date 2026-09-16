@@ -246,14 +246,18 @@ class Plaf203(adbase.ADBase):
 
     def _feeding_plan_requested(self, request: GetFeedingPlanEventIn) -> None:
         def respond(plans: tuple[FeederPlan, ...] | None) -> None:
+            if plans is None:
+                self.logger.warning(
+                    "feeding-plan request left unanswered because fresh feeder truth is unavailable"
+                )
+                return
             try:
                 self.backend.feeding_plan_request_respond(request, plans)
             except ValueError as error:
                 self.logger.error(
-                    "feeding-plan truth could not be represented safely",
+                    "feeding-plan request left unanswered because feeder truth could not be represented safely",
                     reason=str(error),
                 )
-                self.backend.feeding_plan_request_respond(request, None)
 
         self.coordinator.request_plan_snapshot(respond)
 

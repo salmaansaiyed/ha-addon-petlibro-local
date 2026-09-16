@@ -63,17 +63,17 @@ def build_plan_service(plans: tuple[FeederPlan, ...]) -> FeedingPlanServiceOut:
 
 def build_plan_response(
     request: GetFeedingPlanEventIn,
-    plans: tuple[FeederPlan, ...] | None,
+    plans: tuple[FeederPlan, ...],
 ) -> GetFeedingPlanEventOut:
-    """Build a fresh-truth response, or an explicit protocol error."""
+    """Build an authoritative response from fresh feeder-local truth."""
 
-    wire_plans = [] if plans is None else [
+    wire_plans = [
         _wire_plan(plan, GetFeedingPlanOut) for plan in plans
     ]
     return GetFeedingPlanEventOut(
         message_id=request.message_id,
         timestamp=Timestamp.now(),
-        code=Code.OK if plans is not None else Code.ERROR_1,
+        code=Code.OK,
         plans=wire_plans,
     )
 

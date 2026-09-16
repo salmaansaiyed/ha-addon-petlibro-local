@@ -314,6 +314,15 @@ and was acknowledged. No `DEVICE_FEEDING_PLAN_SERVICE` command was observed.
 **Response payload:** `cmd`, same `msgId`, `ts`, `code:0`, and full `plans`
 objects using the same per-plan schema as `FEEDING_PLAN_SERVICE` requests.
 
+**Persistence warning:** Firmware handler `ApplyGetFeedingPlanResponse`
+(`0x0006a270`) does not use the top-level `code` to qualify plan data. If
+`plans` is absent, it returns without changing the on-device plan files. If
+`plans` is present, it treats the array as authoritative and rewrites
+`/user/data/feed_plan/index.bin` and `plan.bin`; consequently, `plans: []`
+clears the persisted schedule even when `code` is nonzero. A server without a
+fresh authoritative plan collection must omit the application response rather
+than send an empty error form.
+
 ### MANUAL_FEEDING_SERVICE
 
 **Command:** `MANUAL_FEEDING_SERVICE`<br>

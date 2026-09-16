@@ -21,6 +21,7 @@ ROOT="${PLAF203_BOOTSTRAP_TEST_ROOT:-/user}"
 DATA="$ROOT/data"
 STATE_HOME="$DATA/local-state-agent"
 BOOTSTRAP_HOME="$DATA/plaf203-bootstrap"
+STATE_BACKUP="$BOOTSTRAP_HOME/preinstall-state"
 OTA1="$ROOT/ota1/AF203_FW"
 OTA2="$ROOT/ota2/AF203_FW"
 INDEX="$DATA/ota/index.bin"
@@ -178,6 +179,27 @@ required_kb=$(( (donor_bytes + 1023) / 1024 + 512 ))
 if [ "$available_kb" -lt "$required_kb" ]; then
     FAIL_REASON="insufficient_flash_${available_kb}k_available_${required_kb}k_required"
     exit 76
+fi
+
+# Preserve the feeder-local settings and schedules before changing startup or
+# sidecar services. The temporary broker must not mutate either source, but a
+# one-time device-local backup gives an authorized maintainer a recovery point
+# if a firmware/version-specific behavior is discovered later. Never replace
+# the first successful pre-install snapshot during a bootstrap retry.
+PHASE=preserving_feeder_state
+if [ ! -f "$STATE_BACKUP/complete" ]; then
+    rm -rf "$STATE_BACKUP" "$STATE_BACKUP.new"
+    mkdir -p "$STATE_BACKUP.new"
+    if [ -e "$DATA/attr" ]; then
+        cp -Rp "$DATA/attr" "$STATE_BACKUP.new/attr"
+    fi
+    if [ -e "$DATA/feed_plan" ]; then
+        cp -Rp "$DATA/feed_plan" "$STATE_BACKUP.new/feed_plan"
+    fi
+    touch "$STATE_BACKUP.new/complete"
+    chmod -R go-rwx "$STATE_BACKUP.new"
+    mv "$STATE_BACKUP.new" "$STATE_BACKUP"
+    sync
 fi
 
 # OEM OTA rewrites app_start.sh to the inactive slot. Replace it with a minimal

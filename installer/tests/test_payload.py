@@ -66,6 +66,11 @@ class PayloadTests(unittest.TestCase):
         (feeder / "ota1").mkdir(parents=True)
         (feeder / "ota2").mkdir()
         (feeder / "data" / "ota").mkdir(parents=True)
+        (feeder / "data" / "attr").mkdir()
+        (feeder / "data" / "attr" / "state.bin").write_bytes(b"device-state")
+        (feeder / "data" / "feed_plan").mkdir()
+        (feeder / "data" / "feed_plan" / "index.bin").write_bytes(b"\x01")
+        (feeder / "data" / "feed_plan" / "plan.bin").write_bytes(b"feed-plan")
         donor = b"\x7fELF" + b"stock-oem" * 100
         donor_slot = "ota1" if execution_slot == "ota2" else "ota2"
         (feeder / donor_slot / "AF203_FW").write_bytes(donor)
@@ -117,6 +122,36 @@ class PayloadTests(unittest.TestCase):
                 (data / "dropbear" / "BUILD_INFO.dropbear.json").read_text(),
             )
 
+    def test_bootstrap_retry_does_not_replace_preinstall_state_snapshot(self) -> None:
+        feeder, _donor, temporary = self._run_installer("ota2")
+        with temporary:
+            data = feeder / "data"
+            (data / "attr" / "state.bin").write_bytes(b"later-device-state")
+            (data / "feed_plan" / "index.bin").write_bytes(b"\x00")
+            (data / "feed_plan" / "plan.bin").write_bytes(b"")
+
+            env = os.environ | {
+                "PLAF203_BOOTSTRAP_TEST_ROOT": str(feeder),
+                "PLAF203_BOOTSTRAP_TEST_SLOT": "ota2",
+            }
+            subprocess.run(
+                ["/bin/sh", str(Path(temporary.name) / "payload")],
+                env=env,
+                check=True,
+                timeout=15,
+            )
+
+            backup = data / "plaf203-bootstrap" / "preinstall-state"
+            self.assertEqual(
+                b"device-state", (backup / "attr" / "state.bin").read_bytes()
+            )
+            self.assertEqual(
+                b"\x01", (backup / "feed_plan" / "index.bin").read_bytes()
+            )
+            self.assertEqual(
+                b"feed-plan", (backup / "feed_plan" / "plan.bin").read_bytes()
+            )
+
     def _assert_successful_install(self, feeder: Path, donor: bytes) -> None:
         self.assertEqual(donor, (feeder / "ota1" / "AF203_FW").read_bytes())
         self.assertEqual(donor, (feeder / "ota2" / "AF203_FW").read_bytes())
@@ -145,6 +180,17 @@ class PayloadTests(unittest.TestCase):
         self.assertEqual(
             "installed_rebooting_to_ota1\n",
             (feeder / "data" / "plaf203-bootstrap" / "status").read_text(),
+        )
+        state_backup = feeder / "data" / "plaf203-bootstrap" / "preinstall-state"
+        self.assertTrue((state_backup / "complete").is_file())
+        self.assertEqual(
+            b"device-state", (state_backup / "attr" / "state.bin").read_bytes()
+        )
+        self.assertEqual(
+            b"\x01", (state_backup / "feed_plan" / "index.bin").read_bytes()
+        )
+        self.assertEqual(
+            b"feed-plan", (state_backup / "feed_plan" / "plan.bin").read_bytes()
         )
 
     def test_state_agent_startup_matches_only_its_runsvdir_tree(self) -> None:

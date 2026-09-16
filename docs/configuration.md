@@ -160,8 +160,10 @@ After the acknowledgement, verification requires exactly the expected plan
 count and IDs, the requested target update or creation, and byte-semantic
 equivalence of every pre-existing non-target record. An update also requires
 unchanged target opaque fields. `GET_FEEDING_PLAN_EVENT` performs a fresh core
-read; if it fails, the controller sends the protocol error form with no plans
-instead of fabricating a schedule.
+read. If that read fails, the controller sends no application response rather
+than fabricating a schedule. AF203 firmware ignores the response `code` when a
+`plans` member is present, so even an error response containing `plans: []`
+would authoritatively clear the feeder's persisted plans.
 
 The state API exposes `audio_url`, but audio URL writes remain blocked because
 tested firmware can restart when given an unreachable URL. The Meal Call text

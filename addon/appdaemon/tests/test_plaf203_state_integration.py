@@ -263,18 +263,32 @@ def test_mqtt_plan_adapter_rejects_unknown_enable_audio_raw_value():
     assert backend.client.plan_messages == []
 
 
-def test_get_plan_event_unavailable_returns_error_without_fabricated_plans():
+def test_get_plan_event_unavailable_sends_no_destructive_empty_plan_response():
     backend = backend_module.Backend()
     backend.client = CapturingClient()
+    backend.logger = Logger()
     request = GetFeedingPlanEventIn(
         message_id=MessageId("request-id"),
         timestamp=Timestamp.now(),
     )
 
-    backend.feeding_plan_request_respond(request, None)
+    assert backend.feeding_plan_request_respond(request, None) is False
+    assert backend.client.plan_responses == []
+
+
+def test_get_plan_event_authoritative_empty_truth_can_clear_plans():
+    backend = backend_module.Backend()
+    backend.client = CapturingClient()
+    backend.logger = Logger()
+    request = GetFeedingPlanEventIn(
+        message_id=MessageId("request-id"),
+        timestamp=Timestamp.now(),
+    )
+
+    assert backend.feeding_plan_request_respond(request, ()) is True
 
     response = backend.client.plan_responses[0]
-    assert response["code"] != Code.OK.value
+    assert response["code"] == Code.OK.value
     assert response["plans"] == []
 
 

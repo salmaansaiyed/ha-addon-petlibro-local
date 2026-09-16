@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.9
+
+- Prevent a failed State Agent plan read from clearing feeder schedules. The
+  add-on now leaves `GET_FEEDING_PLAN_EVENT` unanswered unless it has fresh,
+  authoritative feeder-local truth; AF203 firmware ignores a response error
+  code when a `plans` array is present and treats `plans: []` as authoritative.
+- Keep the temporary bootstrap broker non-authoritative for feeding plans and
+  acknowledge grain-output events with their original execution step.
+- Preserve a mode-restricted, one-time copy of feeder settings and feeding-plan
+  files before future bootstrap installations, without replacing that recovery
+  snapshot during retries.
+- Document the firmware's plan-response persistence behavior, safe bootstrap
+  handoff semantics, and recovery guidance for installations made before this
+  safeguard.
+
 ## 0.3.8
 
 - Add the guided, no-UART stock-feeder installer with a single TUI workflow,

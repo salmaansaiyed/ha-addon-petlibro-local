@@ -165,6 +165,30 @@ unavailable`, `persistent feeder state diverged`, or `persistent feeder write
 failed`. Do not republish retained plan JSON as a workaround; retained and
 stored Home Assistant schedules are deliberately ignored as command sources.
 
+## Settings or schedules changed after bootstrap
+
+Current installer payloads create a one-time, mode-restricted recovery snapshot
+at `/user/data/plaf203-bootstrap/preinstall-state/` before changing production
+startup or sidecar services. The live files remain `/user/data/attr/` and
+`/user/data/feed_plan/`; the backup is not read during normal operation.
+
+First compare file sizes and hashes over SSH rather than copying either
+direction while OEM firmware is running. If restoration is necessary, preserve
+the current live files too and stop the writer or otherwise use a controlled
+recovery procedure before replacing them. Feeding-plan files are a coordinated
+collection (`index.bin`, `plan.bin`, and associated indices), not independent
+JSON values.
+
+Add-on builds predating the unavailable-truth safeguard answered
+`GET_FEEDING_PLAN_EVENT` with an error response containing `plans: []` when the
+State Agent could not be read. AF203 firmware ignores that response's error
+code, treats the present empty array as authoritative, and clears its persisted
+schedule. A stale State Agent token during bootstrap handoff can trigger this
+failure path. Older installer payloads also did not create the pre-install
+snapshot. In that case, recover the prior values from Home Assistant
+recorder/history or another deliberate backup and reapply them through the
+normal controls; do not treat retained MQTT presentation state as feeder truth.
+
 ## Persistent controls are unavailable
 
 The camera and required feeder MQTT responses can remain active while the State
