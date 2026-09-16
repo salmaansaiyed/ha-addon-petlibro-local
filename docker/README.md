@@ -32,12 +32,36 @@ Edit `docker/.env` with the broker address and the feeder network in
 `LAN_CIDR`. Serial, UID, and IP are discovered automatically. The file is
 ignored by Git.
 
-Set `PETLIBRO_STATE_AGENT_TOKEN` to the bearer token used by the read-only
-state agent running on the feeder. Leave `PETLIBRO_STATE_AGENT_URL` empty to
+The installer writes Home Assistant-style keys to
+`build/bootstrap/output/addon-options.patch.json`. For Compose, copy the
+corresponding values into `docker/.env`:
+
+| Generated option | Compose variable |
+| --- | --- |
+| `mqtt_host`, `mqtt_port` | `MQTT_HOST`, `MQTT_PORT` |
+| `mqtt_username`, `mqtt_password` | `MQTT_USERNAME`, `MQTT_PASSWORD` |
+| `feeder_mqtt_host`, `feeder_mqtt_port` | `FEEDER_MQTT_HOST`, `FEEDER_MQTT_PORT` |
+| `petlibro_state_agent_url` | `PETLIBRO_STATE_AGENT_URL` |
+| `petlibro_state_agent_token` | `PETLIBRO_STATE_AGENT_TOKEN` |
+| `state_agent_updates` object | one-line JSON in `STATE_AGENT_UPDATES_JSON` |
+
+Do not commit either file. The generated patch initially enables feeder MQTT
+persistence for handoff; set `PERSIST_FEEDER_MQTT=1` only until the controller
+logs a successful endpoint acknowledgement, then return it to `0`.
+
+Set `PETLIBRO_STATE_AGENT_TOKEN` to the bearer token used by the State Agent
+running on the feeder. Leave `PETLIBRO_STATE_AGENT_URL` empty to
 use `http://<discovered-feeder-ip>:8765`, or use a fixed URL / `{ip}` template
 for a custom deployment. Without a reachable authenticated state API, camera
 and required MQTT protocol handling can continue, but persistent feeder
 settings and schedule writes are intentionally unavailable.
+
+The Compose example leaves signed State Agent updates disabled. To enable them,
+set `STATE_AGENT_UPDATES_JSON` to one line such as:
+
+```text
+{"enabled":true,"manifest_url":"https://raw.githubusercontent.com/tannerln7/ha-addon-petlibro-local/state-agent-releases/state-agent/latest.json","check_on_connect":true,"check_interval_hours":24}
+```
 
 `MQTT_USERNAME` and `MQTT_PASSWORD` authenticate AppDaemon to the broker. The
 feeder uses its own factory/device MQTT account, which must be provisioned in

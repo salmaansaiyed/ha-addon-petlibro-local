@@ -75,10 +75,10 @@ and `device_ip` options are migrated into this registry when all three exist.
 | `feeder_mqtt_port`                         | `1883`                   | Feeder-facing broker TCP port                                                            |
 | `feeder_https_addr`                        | empty                    | Optional HTTPS endpoint included only in an explicit feeder update                       |
 | `petlibro_state_agent_url`                 | empty                    | Optional state API URL; empty derives `http://<feeder-ip>:8765`, and `{ip}` is supported |
-| `petlibro_state_agent_token`               | empty                    | Bearer token configured in the feeder-side read-only state agent                         |
+| `petlibro_state_agent_token`               | empty                    | Bearer token configured in the feeder-side State Agent                                   |
 | `petlibro_state_agent_timeout_seconds`     | `2`                      | Local API request timeout, from 1 to 10 seconds                                          |
 | `state_agent_updates.enabled`              | `false`                  | Enable signed State Agent release checking after feeder-side bootstrap                   |
-| `state_agent_updates.manifest_url`         | empty                    | Required HTTPS `latest.json` URL when updates are enabled                                |
+| `state_agent_updates.manifest_url`         | signed project feed      | HTTPS `latest.json` URL used when updates are enabled                                     |
 | `state_agent_updates.check_on_connect`     | `true`                   | Allow a throttled release check after connection or Home Assistant birth                 |
 | `state_agent_updates.check_interval_hours` | `24`                     | Periodic check interval, from 1 to 168 hours                                             |
 
@@ -89,9 +89,18 @@ account in the external broker.
 
 The first five MQTT options configure only AppDaemon's broker connection.
 `mqtt_host` is deliberately never reused as the physical feeder's destination.
-Normal installs leave `persist_feeder_mqtt` disabled, log that the existing
-feeder configuration is being preserved, and do not send `DEVICE_CONFIG_SYNC`
-at startup.
+The add-on default leaves `persist_feeder_mqtt` disabled, logs that the existing
+feeder configuration is being preserved, and does not send
+`DEVICE_CONFIG_SYNC` at startup. The unified installer is the exception: its
+generated options patch enables this gate for the first local-broker handoff.
+
+The guided installer currently supports one feeder per add-on deployment. The
+controller can discover multiple feeder identities, but this add-on supplies
+one State Agent token to all generated controllers. See the
+[installation guide](../docs/installation.md) before attempting a manual
+multi-feeder deployment.
+After the add-on logs the matching acknowledgement, it may be disabled again to
+preserve the established endpoint on later feeder boots.
 
 Only enable persistence when intentionally migrating or recovering the
 feeder's stored broker address. Restart the add-on after saving the options,
@@ -153,8 +162,16 @@ and uploads the artifact to the authenticated feeder API. It never asks the
 feeder to download a URL. See the [configuration reference](../docs/configuration.md#state-agent-updates)
 and [State Agent guide](../state-agent/README.md#signed-updates).
 
+The default manifest is the project's signed stable feed:
+
+```text
+https://raw.githubusercontent.com/tannerln7/ha-addon-petlibro-local/state-agent-releases/state-agent/latest.json
+```
+
 The nine **Feeding schedule** text entities accept flat JSON. Each document's
-`id` must match its displayed slot number and must already exist on the feeder.
+`id` must match its displayed slot number. Editing an existing ID updates it;
+submitting a valid missing ID creates that plan with conservative defaults for
+feeder-owned metadata. Plan deletion is not exposed.
 The user-editable fields are `execution_time`, `scheduled_days`, and
 `grain_num`; legacy audio fields are ignored because their meanings are not
 verified. Every edit preflights a fresh full plan collection, carries

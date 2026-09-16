@@ -30,8 +30,14 @@ flowchart LR
 [`installer/`](../installer/README.md) is a setup-machine tool used once on a
 stock, already claimed feeder. It captures the feeder's OEM broker identity,
 checks the final broker, sends the one-time OEM OTA bootstrap, restores the OEM
-firmware slots, redirects the feeder to the user's broker, and generates the
-matching add-on options.
+firmware slots, redirects the feeder to the user's broker, observes a fresh OEM
+heartbeat when possible, and generates the matching add-on options.
+
+The installer also builds a pinned Dropbear release from official source using
+a checksum-verified Zig musl toolchain. The production payload always installs
+public-key-only SSH recovery access; password authentication is compiled out.
+All acquisition and build state remains in the ignored repository-local
+`build/bootstrap/` workspace.
 
 This is the only production component allowed to use the unauthenticated OEM
 provisioning and OTA surfaces. Those capabilities do not exist in the installed
@@ -68,7 +74,7 @@ The integration distinguishes state by authority and lifetime.
 | State | Authoritative source | Home Assistant behavior |
 | --- | --- | --- |
 | Persistent feeder settings | State Agent `/v1/core` | Reconciled and retained for presentation; writes require fresh verification |
-| Feeding plans | State Agent `/v1/plans` | Complete-collection reconciliation and verification |
+| Feeding plans | `plans.semantic_records` in State Agent `/v1/core` | Complete-collection reconciliation and verification |
 | Current dispensing state | Solicited `ATTR_GET_SERVICE.motorState`, then grain events | Non-retained, dedicated availability |
 | Runtime telemetry | OEM MQTT events/attributes | Projected as live observations |
 | Last feed observations | Completed grain-event sequence | Retained historical facts |

@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.3.7
+
+- Add the guided, no-UART stock-feeder installer with a single TUI workflow,
+  repository-local build workspace, automatic dependency preflight, and
+  generated add-on configuration.
+- Build and install a pinned static ARMv7 hard-float Dropbear from official
+  source, require key-only SSH recovery, and accept either generated keys,
+  public-key files, or pasted OpenSSH public keys.
+- Capture the feeder's factory MQTT identity through a source-restricted
+  temporary broker, verify it against the final broker before OTA, restore the
+  final endpoint after bootstrap, and best-effort verify a fresh OEM heartbeat
+  with the configured backend broker account.
+- Install the State Agent and update supervisor while preserving OEM firmware
+  in both slots and selecting OTA1 for production startup. Bind protected State
+  Agent tokens to the feeder/Home Assistant addresses and default generated
+  update settings to the signed project release feed.
+- Reject disallowed State Agent source IPs before HTTP parsing, tighten startup
+  service matching and fixed helper paths, and retry transient update-status
+  failures without abandoning an active update transaction.
+- Harden installer secret-file creation, temporary listener restrictions,
+  broker evidence validation, payload serving, and failure/recovery behavior.
+- Refresh repository documentation around the production architecture,
+  installation, broker-account roles, runtime state ownership, plan creation,
+  retention, recovery, and development workflows.
+
 ## 0.3.6
 
 fix: support creating new feeding plans from state-agent truth

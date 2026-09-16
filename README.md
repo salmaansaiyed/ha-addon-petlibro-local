@@ -46,14 +46,19 @@ boundaries.
   interface; optional AAC is supported by the camera backend.
 - Automatic feeder serial, camera UID, and LAN-address discovery.
 - Signed, rollback-capable State Agent updates after initial bootstrap.
-- Optional key-only Dropbear installation during bootstrap.
+- Mandatory key-only SSH recovery access using a pinned, source-built Dropbear.
 
 Current release constraints:
 
 - Home Assistant add-on image: `amd64`.
 - Tested feeder family: PLAF203; firmware variants may differ.
-- The add-on remains marked `experimental` while hardware coverage and the
-  clean-stock bootstrap workflow receive broader validation.
+- The guided production bootstrap currently targets one feeder per add-on
+  deployment. The controller can discover multiple MQTT identities, but the
+  add-on currently has one State Agent token and the installer's protected
+  token binding is single-feeder.
+- The add-on remains marked `experimental`. The end-to-end bootstrap has been
+  validated on firmware 3.1.48, but other firmware variants and every possible
+  power-loss point have not been tested.
 
 ## Requirements
 
@@ -64,7 +69,9 @@ Current release constraints:
   the temporary installer host.
 - A dedicated broker account for the backend. The installer captures the
   feeder's separate factory MQTT identity so it can also be authorized.
-- A Linux setup machine for initial no-UART bootstrap.
+- A Linux x86_64 or ARM64 setup machine for initial no-UART bootstrap.
+- Stable IPv4 addresses (or DHCP reservations) for the feeder, Home Assistant,
+  setup machine, and broker.
 
 The feeder uses plaintext MQTT on tested firmware. Keep it on a trusted or
 isolated network and do not expose the broker, State Agent, go2rtc, or SSH
@@ -76,27 +83,38 @@ listeners directly to the Internet.
    Assistant app/add-on repository list and install **Petlibro Local backend**.
 2. Create a broker account for the add-on and enter it in the add-on
    configuration. Leave the add-on stopped until bootstrap is ready.
-3. On a trusted Linux machine, build the ARM State Agent and run the guided
-   installer:
+3. On a trusted Linux machine, clone this repository and start the guided
+   installer from its root:
 
    ```bash
-   make -C state-agent arm-release
-   python3 installer/bootstrap.py configure --output bootstrap-config.json
-   python3 installer/bootstrap.py prepare --config bootstrap-config.json
-   python3 installer/bootstrap.py run --config bootstrap-config.json
+   ./installer/install.sh
    ```
 
-4. The first `run` may stop after capturing the feeder's factory MQTT
-   credentials. Add that account and its topic ACL to the local broker, then run
-   the same command again.
-5. Merge the generated `addon-options.patch.json` into the add-on configuration,
-   start the add-on, and verify State Agent reconciliation and camera discovery.
+   The installer collects configuration, creates or imports an SSH public key,
+   builds the State Agent and a pinned static Dropbear, prepares the payload,
+   captures the feeder's factory broker account, and waits while you authorize
+   that account. Normal installation continues in the same session. No UART,
+   DNS override, Petlibro account token, or manually supplied feeder member ID
+   is required.
+4. Merge the generated `build/bootstrap/output/addon-options.patch.json` into
+   the add-on configuration,
+   start the add-on, reboot the feeder once after the add-on is ready, and
+   verify State Agent reconciliation and camera discovery.
 
-This is the intended installation architecture, but the complete production
-payload has not yet been fault-injected on a clean stock feeder across all
-supported firmware variants. Read the installer's safety and recovery notes
-before proceeding. The process intentionally preserves an OEM firmware donor
-slot until installation succeeds and restores normal OEM firmware to OTA1.
+Installer downloads, source trees, compiler caches, generated keys, credentials,
+and payloads remain under the repository's ignored `build/bootstrap/` directory.
+
+The process intentionally preserves an OEM firmware donor slot until
+installation succeeds, restores normal OEM firmware to both slots, and selects
+OTA1 for production startup. Read the installer's safety and recovery notes
+before proceeding.
+
+A successful installation leaves the feeder running OEM firmware with:
+
+- its MQTT endpoint set to the user-controlled broker;
+- the authenticated, Home-Assistant-source-restricted State Agent;
+- key-only Dropbear SSH recovery on TCP/2222; and
+- generated add-on options containing the matching State Agent credentials.
 
 See the [complete installation guide](docs/installation.md) and the
 [installer reference](installer/README.md) before modifying a feeder.

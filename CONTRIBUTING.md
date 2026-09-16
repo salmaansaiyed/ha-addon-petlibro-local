@@ -49,7 +49,8 @@ check and state exactly what was not validated.
 - State Agent changes need host integration tests against synthetic file roots;
   update changes also need interrupted transaction/rollback coverage.
 - Installer changes need payload/transaction tests and must not require a live
-  feeder for routine validation.
+  feeder for routine validation. Keep downloads, toolchains, compiler caches,
+  generated keys, credentials, and payloads under ignored `build/bootstrap/`.
 - Packaging/configuration changes need renderer and Compose/image checks.
 
 Do not use sleep-based race tests when explicit generations, callbacks, clocks,

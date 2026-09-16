@@ -94,6 +94,10 @@ container workflows. Camera-specific work is documented in the
 ## Constraints
 
 - The packaged add-on currently targets `amd64`.
+- The guided installer and add-on credential model currently support one feeder
+  per add-on deployment. See the
+  [installation guide](../docs/installation.md) before planning multiple
+  feeders.
 - The State Agent must be installed separately on the feeder.
 - The broker-facing feeder account is distinct from the add-on account.
 - The State Agent write/update APIs are deliberately narrow and authenticated.

@@ -27,7 +27,8 @@ convenience.
 - Python 3.12 or newer;
 - Go 1.24 or the version required by `addon/go2rtc/go.mod`;
 - a C99 host compiler;
-- `arm-linux-gnueabihf-gcc`, `file`, and `readelf` for release validation;
+- `arm-linux-gnueabihf-gcc`, `git`, GNU Make, `file`, and `readelf` for release
+  and installer validation;
 - Docker with Compose for image/config validation;
 - FFmpeg for live stream checks;
 - optional `shellcheck`.
@@ -38,6 +39,7 @@ Create a local Python environment:
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r addon/appdaemon/requirements-dev.txt
+python -m pip install -r installer/requirements.txt
 ```
 
 Never put broker passwords, feeder credentials, State Agent tokens, signing
@@ -142,13 +144,23 @@ input. See the [State Agent README](../state-agent/README.md).
 The installer is device-modifying code. Keep network listeners bound to the
 configured interfaces, restrict temporary services to the expected feeder IP,
 correlate OTA evidence by request and connection generation, and prove the
-final broker accepts both identities before OTA.
+final broker accepts the captured feeder identity before OTA. The post-install
+heartbeat observer must authenticate with the backend identity, subscribe to
+the exact feeder topic before restoring the endpoint, reject retained or
+malformed evidence, and degrade to a clear nonfatal warning when observation is
+not possible.
 
 Payload changes must be explicit, deterministic, and covered by host-side
 transaction tests. Never copy an ambient feeder development directory into a
 production payload. Preserve the invariant that an OEM donor slot is validated
 and selected before overwriting the one-time payload slot. See the
 [installer README](../installer/README.md).
+
+Installer downloads and generated artifacts belong only under the ignored
+`build/bootstrap/` workspace. The Dropbear builder pins the upstream tag and
+commit, verifies the Zig archive checksum, rejects dirty cached source, and
+records a SHA-256 build manifest. Update those pins deliberately and test a
+clean-cache build when changing the toolchain or Dropbear version.
 
 ## Local runtime and diagnostics
 

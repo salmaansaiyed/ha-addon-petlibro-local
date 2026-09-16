@@ -29,13 +29,17 @@ Home Assistant controller.
 ## API
 
 The normal API listens on TCP port `8765` and requires both a bearer token and
-a configured source-IP allowlist. Principal routes are:
+a configured source-IP allowlist. A disallowed peer is closed immediately
+after `accept`, before its HTTP request is parsed or it can occupy the single
+request-processing slot. Bearer authentication remains a second boundary for
+allowed peers. Principal routes are:
 
 - `GET /health`: process and source-file health;
 - `GET /v1/rev`: persistent snapshot revisions;
-- `GET /v1/core`: decoded core state (`?raw=1` adds diagnostic bytes);
-- `GET /v1/plans`: complete feeding-plan collection;
-- `GET /v1/feed-events`: pending outbound firmware event slots;
+- `GET /v1/core`: decoded core state and complete feeding-plan collection
+  (`?raw=1` adds diagnostic bytes);
+- `GET /v1/feed-events`: pending outbound firmware event slots (`?raw=1` adds
+  bounded raw slot bytes);
 - `GET /v1/version`: installed agent/API/platform metadata;
 - `GET /v1/update-status`: durable update transaction state;
 - `POST /v1/update`: fixed-format signed update upload.

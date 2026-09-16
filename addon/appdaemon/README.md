@@ -24,8 +24,8 @@ or expose generic feeder filesystem access.
 
 The controller deliberately separates several sources of truth:
 
-- **Persistent state** comes from State Agent `/v1/core` and `/v1/plans`
-  snapshots. Retained Home Assistant values are never treated as feeder truth.
+- **Persistent state and plans** come from State Agent `/v1/core` snapshots.
+  Retained Home Assistant values are never treated as feeder truth.
 - **Fresh dispensing bootstrap state** comes from a correlated, solicited
   `ATTR_GET_SERVICE.motorState` response.
 - **Immediate feed transitions** come from `GRAIN_OUTPUT_EVENT` messages.
@@ -37,6 +37,12 @@ non-retained. On startup, reconnect, or `homeassistant/status = online`, the
 controller reacquires live motor state before marking that entity available.
 A local event generation prevents a delayed solicited response from
 overwriting a newer grain event.
+
+Feeding-plan commands always start with a fresh `/v1/core` preflight and send a
+complete collection. They can update an existing slot or create a missing plan
+ID while preserving every existing record; deletion is not exposed. The
+post-ack snapshot must prove the intended collection transition before Home
+Assistant accepts it.
 
 ## Source map
 

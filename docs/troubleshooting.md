@@ -1,5 +1,51 @@
 # Troubleshooting
 
+## Installer preflight or listener startup fails
+
+Always start installation with `./installer/install.sh` from the repository
+root. The wrapper creates the repository-local `.venv`, installs Python
+requirements, and checks the host build tools. On Debian/Ubuntu it can install
+missing fixed package dependencies after confirmation; on other distributions,
+install the reported tools with the system package manager and rerun it.
+
+The setup host must own the IPv4 address entered in the wizard and be able to
+bind TCP/1883 and the configured temporary HTTP port (18080 by default). Check
+for a conflicting broker or relay with:
+
+```bash
+sudo ss -ltnp | grep -E ':(1883|18080) '
+```
+
+If the final broker already occupies setup-host TCP/1883, use a different setup
+machine or address. AF203_FW must be provisioned with feeder-facing port 1883;
+changing the temporary port is not a working substitute on tested firmware.
+
+## Installer waits for the feeder MQTT connection
+
+The installer starts its restricted listener before sending OEM command `0x02`.
+Confirm the feeder IP, setup-host IP, host firewall, and same-LAN routing. If
+prompted, reboot the feeder once without factory-resetting it. A feeder can be
+connected to Wi-Fi and reachable by ping/SSH while its MQTT indicator is still
+blinking.
+
+If a prior run stopped after the redirect, rerun with the saved configuration.
+The feeder may already point at the temporary listener, and the new run first
+waits for that connection before sending another redirect. No DNS rewrite or
+member-ID input is required.
+
+## Installer warns that final heartbeat verification failed
+
+The installer uses the configured backend account to subscribe to the exact
+non-retained feeder heartbeat topic, then restores the final broker endpoint.
+A broker connection, authentication, SUBACK, or heartbeat timeout is reported
+as a warning rather than invalidating an otherwise completed OTA transaction.
+
+Verify that both broker accounts exist, that the backend can subscribe to the
+feeder's `dl/PLAF203/...` topics, and that the feeder account can publish its
+device tree. Then start the add-on and confirm the feeder becomes online. The
+heartbeat comes from OEM firmware; restarting or reconfiguring the State Agent
+cannot repair broker authentication.
+
 ## Add-on does not start
 
 Check the Home Assistant app/add-on log. Configuration errors are reported
@@ -106,11 +152,12 @@ schedule 9. The
 add-on rejects a mismatch and logs `feeding-plan slot/id mismatch ignored`
 without logging the schedule contents.
 
-The slot must already exist in the feeder's `/v1/core` plan collection. The
-controller does not create or delete plans. A valid update logs a pending write,
-performs a fresh full-state preflight, waits for the matching MQTT ack, and then
-logs `persistent feeder write verified` only after `/v1/core` contains the
-complete expected collection.
+If the slot does not exist in the feeder's `/v1/core` plan collection, a valid
+submission creates it while preserving all existing plans. Existing IDs are
+updated in place. The controller does not expose deletion. A valid change logs
+a pending write, performs a fresh full-state preflight, waits for the matching
+MQTT ack, and then logs `persistent feeder write verified` only after
+`/v1/core` contains the complete expected collection.
 
 If the UI restores an older value, that is intentional when verification
 failed: feeder-local truth wins. Look for `feed-plan preflight`, `state API
@@ -120,9 +167,9 @@ stored Home Assistant schedules are deliberately ignored as command sources.
 
 ## Persistent controls are unavailable
 
-The camera and required feeder MQTT responses can remain active while the
-read-only state API is unavailable, but persistent settings and plans are
-blocked. Confirm the state agent responds from the add-on network at
+The camera and required feeder MQTT responses can remain active while the State
+Agent snapshot API is unavailable, but persistent settings and plans are
+blocked. Confirm the State Agent responds from the add-on network at
 `http://FEEDER_IP:8765/health`, that `petlibro_state_agent_token` matches its
 bearer token, and that a custom `petlibro_state_agent_url` does not point to a
 stale address. Never paste the token into logs or issue reports.
@@ -130,6 +177,12 @@ stale address. Never paste the token into logs or issue reports.
 At `debug` level, a healthy recovery shows `feeder state API recovered`, a
 transition through `RECONCILING`, and `feeder reconciliation complete`. HTTP
 authentication failures are reported by type without exposing the token.
+
+After bootstrap, `StateAgentUnauthorized` usually means Home Assistant still
+has an older token. Compare the add-on option with the current protected
+`build/bootstrap/output/addon-options.patch.json`, update it, and reload the
+add-on. Token rotation intentionally invalidates the old value. Do not disable
+authentication or copy tokens into public logs.
 
 If `/health` reports `state_decode.ok: false`, do not bypass the check. Confirm
 `/user/data/attr/state.bin` is readable and exactly 236 bytes. If `/v1/core`
@@ -202,10 +255,11 @@ Confirm the feeder itself is connecting to the local broker and that topics
 beginning with
 `dl/PLAF203/YOUR_DEVICE_SERIAL/device/` are present.
 
-The backend does not change feeder DNS or provision its factory MQTT
-credentials. The feeder identity is separate from the backend identity and must
-already exist in the broker. Those network prerequisites must be completed
-separately.
+The running backend does not provision the feeder's factory MQTT account. The
+feeder identity is separate from the backend identity and must exist in the
+broker. The unified installer captures that identity and pauses so the operator
+can create it before OTA; a manual or legacy installation must satisfy the same
+requirement separately.
 
 Normal startup logs `Feeder MQTT persistence disabled; preserving existing
 feeder MQTT config`. If the feeder unexpectedly queries an internal name such

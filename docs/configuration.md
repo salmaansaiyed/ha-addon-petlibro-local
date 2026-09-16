@@ -72,7 +72,8 @@ fresh feeder state from `/v1/core` is authoritative.
 
 ## Feeder state API and reconciliation
 
-Persistent settings and feeding plans use the feeder-side read-only state API.
+Persistent settings and feeding plans use the feeder-side State Agent snapshot
+API.
 When `petlibro_state_agent_url` is empty, the renderer derives
 `http://<discovered-feeder-ip>:8765` for each device. A custom URL may include
 one `{ip}` placeholder. A fixed URL is suitable only when one feeder is
@@ -102,7 +103,7 @@ has these fields:
 ```yaml
 state_agent_updates:
   enabled: true
-  manifest_url: https://updates.example.invalid/plaf203/latest.json
+  manifest_url: https://raw.githubusercontent.com/tannerln7/ha-addon-petlibro-local/state-agent-releases/state-agent/latest.json
   check_on_connect: true
   check_interval_hours: 24
 ```
@@ -139,24 +140,28 @@ falling back to retained MQTT, Home Assistant, or AppDaemon storage.
 
 ### Feeding-plan edits
 
-An edit is supported only for a plan ID already present in
-`/v1/core.plans.semantic_records`; plan add/delete is not currently exposed.
-Before every plan command the controller performs a fresh `/v1/core` preflight
-and builds one full-collection MQTT payload from that response. It mutates only
-the requested UTC hour, minute, weekday set, portions, derived one-shot flag,
-and the target record's update timestamp. `enable_audio_raw` passes through as
-the existing `enableAudio` field and must be 0 or 1; `audio_times` passes
-through unchanged. The 64-bit `skip_end_time` is sent through the protocol. The
-ten-byte opaque tail remains in the coordinator's cloned truth model and must
-remain unchanged in the post-write readback; the current MQTT schema has no
-field that exposes it. Runtime `execution_state` and regenerated `sync_time`
-are excluded from semantic schedule equality.
+Plan IDs range from 1 through 9. Before every command the controller performs
+a fresh `/v1/core` preflight and builds one full-collection MQTT payload from
+that response. If the requested ID exists, it mutates only that record's UTC
+hour, minute, weekday set, portions, derived one-shot flag, and update
+timestamp. If the ID is absent, it appends a new record with safe feeder-field
+defaults: Meal Call disabled, zero audio repetitions, zero skip end time, no
+opaque tail, and idle execution state. Plan deletion is not exposed.
 
-After the acknowledgement, verification requires the same plan count and IDs,
-the requested target change, unchanged target opaque fields, and byte-semantic
-equivalence of every non-target record. `GET_FEEDING_PLAN_EVENT` also performs
-a fresh core read. If it fails, the controller sends the protocol error form
-with no plans instead of fabricating a schedule.
+For existing records, `enable_audio_raw` passes through as the existing
+`enableAudio` field and must be 0 or 1; `audio_times` and the 64-bit
+`skip_end_time` pass through unchanged. The ten-byte opaque tail remains in the
+coordinator's cloned truth model and must remain unchanged in the post-write
+readback; the current MQTT schema has no field that exposes it. Runtime
+`execution_state` and regenerated `sync_time` are excluded from semantic
+schedule equality.
+
+After the acknowledgement, verification requires exactly the expected plan
+count and IDs, the requested target update or creation, and byte-semantic
+equivalence of every pre-existing non-target record. An update also requires
+unchanged target opaque fields. `GET_FEEDING_PLAN_EVENT` performs a fresh core
+read; if it fails, the controller sends the protocol error form with no plans
+instead of fabricating a schedule.
 
 The state API exposes `audio_url`, but audio URL writes remain blocked because
 tested firmware can restart when given an unreachable URL. The Meal Call text
@@ -174,6 +179,22 @@ acknowledgement/event path instead of expecting a persistent `/v1/core` change.
 Explicit feeder MQTT endpoint persistence remains a separately gated recovery
 operation and is reported as acknowledged-but-not-locally-verifiable because
 `/v1/core` does not expose endpoint configuration.
+
+### Dispensing and last-feed state
+
+Current dispensing state is live runtime data, not persistent feeder
+configuration. On startup, reconnect, or Home Assistant birth, the controller
+uses a correlated solicited `ATTR_GET_SERVICE.motorState` response to publish
+Idle, Dispensing, or Recovering. Grain events then provide immediate
+Dispensing, Blocked, and Idle transitions. Unknown values, malformed replies,
+timeouts, and disconnects make only this entity unavailable; they never infer
+Idle from stale state.
+
+`food_output/progress` and its dedicated availability topic are non-retained.
+The last dispense started, completed, portions, and source topics are retained
+because they are historical observations. A new installation therefore shows
+those four entities as unknown until the first completed feed unless the broker
+already holds valid retained observations.
 
 ## Device discovery and overrides
 
@@ -206,6 +227,13 @@ devices:
 ```
 
 Omit the list for normal automatic setup.
+
+The controller can discover multiple MQTT identities, but the current add-on
+schema supplies one State Agent bearer token to every generated controller.
+The guided installer binds its generated token to one feeder. The supported
+guided deployment is therefore one feeder per add-on instance; multi-feeder
+State Agent authentication requires deliberate manual provisioning with a
+shared token and is not covered by the installer.
 
 The image includes the same resolver used by the coordinator:
 
@@ -285,6 +313,12 @@ are never copied into the physical feeder's configuration. By default,
 `persist_feeder_mqtt` is false and the controller acknowledges
 `DEVICE_START_EVENT` without sending `DEVICE_CONFIG_SYNC`, preserving the
 feeder's existing MQTT and HTTPS endpoints.
+
+The unified installer intentionally generates an add-on patch with this option
+enabled for the initial handoff. This lets the first reconciled add-on startup
+confirm or repair the final broker endpoint. After the matching acknowledgement
+appears in the log, the operator may disable it so later feeder boots return to
+preserve-only behavior.
 
 Endpoint persistence is an advanced recovery/migration operation. To use it,
 set `persist_feeder_mqtt: true`, provide a feeder-routable
