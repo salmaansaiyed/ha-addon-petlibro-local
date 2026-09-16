@@ -1273,10 +1273,16 @@ static char *trim_inplace(char *s) {
   return s;
 }
 
-static bool request_authorized(const HttpRequest *req, const char *client_ip) {
+static bool source_ip_authorized(const char *client_ip) {
   bool local_loopback = strcmp(client_ip, "127.0.0.1") == 0;
   if (g_cfg.allow_ip[0] && !local_loopback &&
       strcmp(g_cfg.allow_ip, client_ip) != 0)
+    return false;
+  return true;
+}
+
+static bool request_authorized(const HttpRequest *req, const char *client_ip) {
+  if (!source_ip_authorized(client_ip))
     return false;
   if (!g_cfg.require_token)
     return true;
@@ -2908,6 +2914,15 @@ static int run_server(void) {
         continue;
       perror("accept");
       break;
+    }
+    char client_ip[INET_ADDRSTRLEN] = {0};
+    if (inet_ntop(AF_INET, &peer.sin_addr, client_ip, sizeof(client_ip)) == NULL ||
+        !source_ip_authorized(client_ip)) {
+      /* Reject before parsing HTTP or allowing an untrusted peer to occupy a
+       * connection slot. Close silently because socket write timeouts have not
+       * been installed yet. request_authorized() remains defense in depth. */
+      close(cfd);
+      continue;
     }
     struct timeval client_timeout;
     client_timeout.tv_sec = g_cfg.socket_timeout_seconds;

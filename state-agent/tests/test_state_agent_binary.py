@@ -20,6 +20,7 @@ from settings_map import SETTING_COMMANDS
 
 TOKEN = "synthetic-agent-test-token"
 PLATFORM_ID = "linux-armv7-eabihf"
+LOCAL_URL_OPENER = request.build_opener(request.ProxyHandler({}))
 
 
 def _fnv64(data, initial=14695981039346656037):
@@ -347,7 +348,7 @@ class RunningAgent:
             self.base_url + path,
             headers={"Authorization": f"Bearer {TOKEN}"},
         )
-        with request.urlopen(req, timeout=1) as response:
+        with LOCAL_URL_OPENER.open(req, timeout=1) as response:
             return json.load(response)
 
     def close(self):
@@ -616,9 +617,28 @@ def test_authenticated_loopback_bypasses_remote_source_allowlist(
             headers={"Authorization": "Bearer definitely-wrong"},
         )
         with pytest.raises(error.HTTPError) as auth_error:
-            request.urlopen(bad_token, timeout=1)
+            LOCAL_URL_OPENER.open(bad_token, timeout=1)
 
     assert auth_error.value.code == 401
+
+
+def test_disallowed_source_is_closed_before_http_parsing(state_agent_binary, tmp_path):
+    _write_snapshot(tmp_path)
+
+    with RunningAgent(
+        state_agent_binary,
+        tmp_path,
+        allow_ip="192.0.2.10",
+    ) as agent:
+        with socket.socket() as client:
+            client.settimeout(1)
+            client.bind(("127.0.0.2", 0))
+            client.connect(("127.0.0.1", agent.port))
+            client.sendall(b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            try:
+                assert client.recv(1) == b""
+            except ConnectionResetError:
+                pass
 
 
 def test_routes_require_exact_path_and_raw_query_is_exact_match(
@@ -634,14 +654,14 @@ def test_routes_require_exact_path_and_raw_query_is_exact_match(
             headers={"Authorization": f"Bearer {TOKEN}"},
         )
         with pytest.raises(error.HTTPError) as version_err:
-            request.urlopen(missing, timeout=1)
+            LOCAL_URL_OPENER.open(missing, timeout=1)
 
         missing_health = request.Request(
             agent.base_url + "/healthx",
             headers={"Authorization": f"Bearer {TOKEN}"},
         )
         with pytest.raises(error.HTTPError) as health_err:
-            request.urlopen(missing_health, timeout=1)
+            LOCAL_URL_OPENER.open(missing_health, timeout=1)
 
     assert "raw" in exact
     assert "raw" not in query_substring
