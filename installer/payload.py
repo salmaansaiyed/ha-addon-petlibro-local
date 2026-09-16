@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import io
 import os
 import shutil
 import stat
+import struct
 import tarfile
 import tempfile
 from pathlib import Path
@@ -151,6 +154,10 @@ for required in \
     local-state-agent/plaf203-update-fs \
     local-state-agent/app_start_snippet.sh \
     local-state-agent/token \
+    dropbear/dropbearmulti \
+    dropbear/LICENSE.dropbear \
+    dropbear/BUILD_INFO.dropbear.json \
+    authorized_keys \
     app_start.sh; do
     if [ ! -s "$STAGE/$required" ]; then
         printf '%s\n' "archive_missing_$required" > "$JOURNAL"
@@ -200,26 +207,21 @@ fi
 mv "$STATE_HOME.new" "$STATE_HOME"
 touch "$DATA/enable_state_agent"
 
-if [ -d "$STAGE/dropbear" ]; then
-    rm -rf "$DATA/dropbear.new"
-    mv "$STAGE/dropbear" "$DATA/dropbear.new"
-    chmod 700 "$DATA/dropbear.new/dropbear" "$DATA/dropbear.new/dropbearkey"
-    if [ -d "$DATA/dropbear" ]; then
-        rm -rf "$DATA/dropbear.pre-bootstrap"
-        mv "$DATA/dropbear" "$DATA/dropbear.pre-bootstrap"
-    fi
-    mv "$DATA/dropbear.new" "$DATA/dropbear"
+rm -rf "$DATA/dropbear.new"
+mv "$STAGE/dropbear" "$DATA/dropbear.new"
+chmod 700 "$DATA/dropbear.new/dropbearmulti"
+chmod 600 "$DATA/dropbear.new/LICENSE.dropbear" \
+    "$DATA/dropbear.new/BUILD_INFO.dropbear.json"
+ln -sf dropbearmulti "$DATA/dropbear.new/dropbear"
+ln -sf dropbearmulti "$DATA/dropbear.new/dropbearkey"
+cp "$STAGE/authorized_keys" "$DATA/dropbear.new/authorized_keys"
+chmod 600 "$DATA/dropbear.new/authorized_keys"
+if [ -d "$DATA/dropbear" ]; then
+    rm -rf "$DATA/dropbear.pre-bootstrap"
+    mv "$DATA/dropbear" "$DATA/dropbear.pre-bootstrap"
 fi
-
-if [ -s "$STAGE/authorized_keys" ]; then
-    mkdir -p "$DATA/dropbear"
-    cp "$STAGE/authorized_keys" "$DATA/dropbear/authorized_keys.new"
-    chmod 600 "$DATA/dropbear/authorized_keys.new"
-    mv "$DATA/dropbear/authorized_keys.new" "$DATA/dropbear/authorized_keys"
-    touch "$DATA/enable_ssh"
-else
-    rm -f "$DATA/enable_ssh"
-fi
+mv "$DATA/dropbear.new" "$DATA/dropbear"
+touch "$DATA/enable_ssh"
 
 PHASE=restoring_payload_slot
 printf '%s\n' "restoring_$EXECUTION_SLOT" > "$JOURNAL"
@@ -277,10 +279,29 @@ if [ -f /user/data/enable_ssh ] && \
             -f /user/data/dropbear/dropbear_ed25519_host_key
         chmod 600 /user/data/dropbear/dropbear_ed25519_host_key
     fi
-    pidof dropbear >/dev/null 2>&1 || \
+    dropbear_running=false
+    if [ -r /tmp/dropbear.pid ]; then
+        dropbear_pid="$(cat /tmp/dropbear.pid 2>/dev/null || true)"
+        case "$dropbear_pid" in
+            ''|*[!0-9]*) ;;
+            *)
+                if [ -r "/proc/$dropbear_pid/cmdline" ]; then
+                    dropbear_cmdline="$(tr '\000' ' ' < "/proc/$dropbear_pid/cmdline")"
+                    case "$dropbear_cmdline" in
+                        /user/data/dropbear/dropbear\ *' -p 2222 '*)
+                            dropbear_running=true
+                            ;;
+                    esac
+                fi
+                ;;
+        esac
+    fi
+    if [ "$dropbear_running" != true ]; then
+        rm -f /tmp/dropbear.pid
         /user/data/dropbear/dropbear \
             -r /user/data/dropbear/dropbear_ed25519_host_key \
             -p 2222 -s -P /tmp/dropbear.pid
+    fi
 fi
 
 /user/ota1/AF203_FW &
@@ -293,10 +314,23 @@ def _copy_required(source: Path, destination: Path) -> None:
     shutil.copyfile(source, destination)
 
 
-def _validate_public_key(value: str) -> str:
+def _read_ssh_field(blob: bytes, offset: int) -> tuple[bytes, int]:
+    if offset + 4 > len(blob):
+        raise ValueError("SSH public key blob is truncated")
+    length = struct.unpack_from("!I", blob, offset)[0]
+    offset += 4
+    end = offset + length
+    if end > len(blob):
+        raise ValueError("SSH public key blob is truncated")
+    return blob[offset:end], end
+
+
+def validate_public_key(value: str) -> str:
     normalized = value.strip()
     if not normalized:
-        return ""
+        raise ValueError("an SSH public key is required for feeder recovery access")
+    if "\n" in normalized or "\r" in normalized:
+        raise ValueError("SSH public key must contain exactly one line")
     fields = normalized.split()
     if len(fields) < 2 or fields[0] not in {
         "ssh-ed25519",
@@ -304,24 +338,52 @@ def _validate_public_key(value: str) -> str:
         "ecdsa-sha2-nistp256",
     }:
         raise ValueError("SSH public key must be one supported OpenSSH public-key line")
-    if "\n" in normalized or "\r" in normalized:
-        raise ValueError("SSH public key must contain exactly one line")
+    try:
+        blob = base64.b64decode(fields[1], validate=True)
+    except (binascii.Error, ValueError) as err:
+        raise ValueError("SSH public key contains invalid base64") from err
+
+    algorithm, offset = _read_ssh_field(blob, 0)
+    if algorithm != fields[0].encode("ascii"):
+        raise ValueError("SSH public key type does not match its encoded key blob")
+    if fields[0] == "ssh-ed25519":
+        key_bytes, offset = _read_ssh_field(blob, offset)
+        if len(key_bytes) != 32:
+            raise ValueError("Ed25519 SSH public key must contain 32 key bytes")
+    elif fields[0] == "ssh-rsa":
+        exponent, offset = _read_ssh_field(blob, offset)
+        modulus, offset = _read_ssh_field(blob, offset)
+        if not exponent or not modulus:
+            raise ValueError("RSA SSH public key is incomplete")
+    else:
+        curve, offset = _read_ssh_field(blob, offset)
+        point, offset = _read_ssh_field(blob, offset)
+        if curve != b"nistp256" or len(point) != 65 or point[:1] != b"\x04":
+            raise ValueError("ECDSA SSH public key is not a valid nistp256 key")
+    if offset != len(blob):
+        raise ValueError("SSH public key blob contains trailing data")
     return normalized
 
 
 def _validate_dropbear_bundle(path: Path) -> None:
-    for name in ("dropbear", "dropbearkey"):
-        candidate = path / name
-        if not candidate.is_file():
-            raise FileNotFoundError(candidate)
-        header = candidate.read_bytes()[:20]
-        if (
-            len(header) < 20
-            or header[:4] != b"\x7fELF"
-            or header[4] != 1
-            or int.from_bytes(header[18:20], "little") != 40
-        ):
-            raise ValueError(f"{candidate} is not an ELF32 ARM executable")
+    candidate = path / "dropbearmulti"
+    license_file = path / "LICENSE.dropbear"
+    build_info = path / "BUILD_INFO.dropbear.json"
+    if not candidate.is_file():
+        raise FileNotFoundError(candidate)
+    if not license_file.is_file():
+        raise FileNotFoundError(license_file)
+    if not build_info.is_file():
+        raise FileNotFoundError(build_info)
+    header = candidate.read_bytes()[:40]
+    if (
+        len(header) < 40
+        or header[:4] != b"\x7fELF"
+        or header[4] != 1
+        or int.from_bytes(header[18:20], "little") != 40
+        or not (int.from_bytes(header[36:40], "little") & 0x400)
+    ):
+        raise ValueError(f"{candidate} is not an ELF32 ARM hard-float executable")
 
 
 def build_payload(
@@ -330,20 +392,22 @@ def build_payload(
     state_agent_dir: Path,
     home_assistant_ip: str,
     state_agent_token: str,
-    ssh_public_key: str = "",
-    dropbear_dir: Path | None = None,
+    ssh_public_key: str,
+    dropbear_dir: Path,
 ) -> Path:
     """Create an OTA payload without persisting intermediate secret files."""
 
-    key = _validate_public_key(ssh_public_key)
-    if key and dropbear_dir is None:
-        raise ValueError("dropbear_dir is required when SSH is enabled")
-    if dropbear_dir is not None:
-        _validate_dropbear_bundle(dropbear_dir)
-    if not state_agent_token or "\n" in state_agent_token or "\r" in state_agent_token:
-        raise ValueError("state-agent token must be one non-empty line")
+    key = validate_public_key(ssh_public_key)
+    _validate_dropbear_bundle(dropbear_dir)
+    if len(state_agent_token) != 64 or any(
+        character not in "0123456789abcdef" for character in state_agent_token
+    ):
+        raise ValueError("state-agent token must be exactly 64 lowercase hexadecimal characters")
 
-    with tempfile.TemporaryDirectory(prefix="plaf203-bootstrap-") as raw_temp:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=".payload-build-", dir=output.parent
+    ) as raw_temp:
         root = Path(raw_temp)
         agent = root / "local-state-agent"
         agent.mkdir()
@@ -368,13 +432,12 @@ def build_payload(
         run_path.write_text(run_text, encoding="utf-8")
         (agent / "token").write_text(state_agent_token + "\n", encoding="ascii")
         (root / "app_start.sh").write_text(APP_START_TEMPLATE, encoding="ascii")
-        (root / "authorized_keys").write_text((key + "\n") if key else "", encoding="ascii")
+        (root / "authorized_keys").write_text(key + "\n", encoding="ascii")
 
-        if dropbear_dir is not None:
-            target = root / "dropbear"
-            target.mkdir()
-            for name in ("dropbear", "dropbearkey"):
-                _copy_required(dropbear_dir / name, target / name)
+        target = root / "dropbear"
+        target.mkdir()
+        for name in ("dropbearmulti", "LICENSE.dropbear", "BUILD_INFO.dropbear.json"):
+            _copy_required(dropbear_dir / name, target / name)
 
         for path in root.rglob("*"):
             if path.is_file():
@@ -393,7 +456,6 @@ def build_payload(
                 else:
                     tar.addfile(info)
 
-    output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(output.name + ".new")
     with temporary.open("wb") as stream:
         stream.write(INSTALLER)

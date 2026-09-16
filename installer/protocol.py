@@ -21,7 +21,7 @@ class ProtocolError(ValueError):
 
 
 def build_set_mqtt_server_frame(
-    host: str, port: int, member_id: str = "1", sequence: int = 1
+    host: str, port: int, member_id: str, sequence: int = 1
 ) -> bytes:
     """Build the normal, checksum-free OEM provisioning command 0x02 frame."""
 
@@ -134,8 +134,8 @@ def parse_connect(packet: bytes) -> MqttConnect:
     flags = packet[offset + 1]
     keep_alive = struct.unpack_from("!H", packet, offset + 2)[0]
     offset += 4
-    if protocol_name != b"MQTT" or protocol_level != 4:
-        raise ProtocolError("only MQTT 3.1.1 CONNECT is supported")
+    if (protocol_name, protocol_level) not in ((b"MQIsdp", 3), (b"MQTT", 4)):
+        raise ProtocolError("only MQTT 3.1 and 3.1.1 CONNECT are supported")
     if flags & 0x01:
         raise ProtocolError("reserved MQTT CONNECT flag is set")
 

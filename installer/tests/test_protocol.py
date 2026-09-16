@@ -17,22 +17,25 @@ from installer.protocol import (
 
 class ProvisioningProtocolTests(unittest.TestCase):
     def test_builds_normal_cmd02_frame(self) -> None:
-        frame = build_set_mqtt_server_frame("192.0.2.10", 1883, "1", sequence=7)
+        member_id = b"123456789"
+        frame = build_set_mqtt_server_frame(
+            "192.0.2.10", 1883, member_id.decode("ascii"), sequence=7
+        )
         endpoint = b"192.0.2.10:1883"
         self.assertEqual(b"DL\x02\x00\x07", frame[:5])
-        self.assertEqual(len(endpoint) + 3, frame[5])
+        self.assertEqual(len(endpoint) + len(member_id) + 2, frame[5])
         self.assertEqual(len(endpoint), frame[6])
         self.assertEqual(endpoint, frame[7 : 7 + len(endpoint)])
-        self.assertEqual(b"\x01\x31\xff", frame[-3:])
+        self.assertEqual(bytes((len(member_id),)) + member_id + b"\xff", frame[-11:])
 
     def test_rejects_colon_in_host(self) -> None:
         with self.assertRaisesRegex(ValueError, "without ':'"):
-            build_set_mqtt_server_frame("host:bad", 1883)
+            build_set_mqtt_server_frame("host:bad", 1883, "123456789")
 
     def test_rejects_ports_the_oem_parser_cannot_split(self) -> None:
         for port in (999, 10000, 65535):
             with self.subTest(port=port), self.assertRaisesRegex(ValueError, "four decimal"):
-                build_set_mqtt_server_frame("192.0.2.10", port)
+                build_set_mqtt_server_frame("192.0.2.10", port, "123456789")
 
 
 class MqttProtocolTests(unittest.TestCase):
@@ -46,10 +49,24 @@ class MqttProtocolTests(unittest.TestCase):
         self.assertEqual("product-key", result.username)
         self.assertEqual(b"secret", result.password)
         self.assertEqual(60, result.keep_alive)
+        self.assertEqual(4, result.protocol_level)
+
+    def test_parses_stock_legacy_mqtt_31_connect(self) -> None:
+        flags = 0xC2
+        variable = b"\x00\x06MQIsdp\x03" + bytes((flags,)) + b"\x00\x3c"
+        payload = encode_utf8("SERIAL123") + encode_utf8("product-key") + encode_utf8(b"secret")
+        packet = b"\x10" + encode_remaining_length(len(variable + payload)) + variable + payload
+
+        result = parse_connect(packet)
+
+        self.assertEqual("SERIAL123", result.client_id)
+        self.assertEqual("product-key", result.username)
+        self.assertEqual(b"secret", result.password)
+        self.assertEqual(3, result.protocol_level)
 
     def test_rejects_mqtt_v5_connect(self) -> None:
         body = b"\x00\x04MQTT\x05\x02\x00\x3c\x00\x00\x00"
-        with self.assertRaisesRegex(ProtocolError, "3.1.1"):
+        with self.assertRaisesRegex(ProtocolError, "3.1 and 3.1.1"):
             parse_connect(b"\x10" + encode_remaining_length(len(body)) + body)
 
     def test_parses_subscribe_and_publish(self) -> None:

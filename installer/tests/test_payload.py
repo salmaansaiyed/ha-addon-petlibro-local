@@ -6,7 +6,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from installer.payload import build_payload
+from installer.payload import build_payload, validate_public_key
+
+
+VALID_PUBLIC_KEY = (
+    "ssh-ed25519 "
+    "AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f "
+    "bootstrap@example"
+)
 
 
 class PayloadTests(unittest.TestCase):
@@ -28,31 +35,32 @@ class PayloadTests(unittest.TestCase):
         )
         return agent
 
+    def _dropbear_tree(self, root: Path) -> Path:
+        dropbear = root / "dropbear-build"
+        dropbear.mkdir()
+        elf32_arm = bytearray(52)
+        elf32_arm[:7] = b"\x7fELF\x01\x01\x01"
+        elf32_arm[18:20] = (40).to_bytes(2, "little")
+        elf32_arm[36:40] = (0x400).to_bytes(4, "little")
+        (dropbear / "dropbearmulti").write_bytes(elf32_arm)
+        (dropbear / "LICENSE.dropbear").write_text("Dropbear license\n")
+        (dropbear / "BUILD_INFO.dropbear.json").write_text("{}\n")
+        return dropbear
+
     def _run_installer(
-        self, execution_slot: str, *, enable_ssh: bool = False
+        self, execution_slot: str
     ) -> tuple[Path, bytes, tempfile.TemporaryDirectory[str]]:
         raw = tempfile.TemporaryDirectory()
         temp = Path(raw.name)
         agent = self._state_agent_tree(temp)
         payload = temp / "payload"
-        dropbear = None
-        key = ""
-        if enable_ssh:
-            dropbear = temp / "dropbear-build"
-            dropbear.mkdir()
-            elf32_arm = bytearray(52)
-            elf32_arm[:7] = b"\x7fELF\x01\x01\x01"
-            elf32_arm[18:20] = (40).to_bytes(2, "little")
-            for name in ("dropbear", "dropbearkey"):
-                (dropbear / name).write_bytes(elf32_arm)
-            key = "ssh-ed25519 AAAATEST bootstrap@example"
         build_payload(
             output=payload,
             state_agent_dir=agent,
             home_assistant_ip="192.0.2.25",
             state_agent_token="a" * 64,
-            ssh_public_key=key,
-            dropbear_dir=dropbear,
+            ssh_public_key=VALID_PUBLIC_KEY,
+            dropbear_dir=self._dropbear_tree(temp),
         )
         feeder = temp / "feeder"
         (feeder / "ota1").mkdir(parents=True)
@@ -82,18 +90,32 @@ class PayloadTests(unittest.TestCase):
         with temporary:
             self._assert_successful_install(feeder, donor)
 
-    def test_installer_enables_key_only_dropbear_when_requested(self) -> None:
-        feeder, _donor, temporary = self._run_installer("ota2", enable_ssh=True)
+    def test_installer_always_enables_key_only_dropbear(self) -> None:
+        feeder, _donor, temporary = self._run_installer("ota2")
         with temporary:
             data = feeder / "data"
             self.assertTrue((data / "enable_ssh").is_file())
             self.assertEqual(
-                "ssh-ed25519 AAAATEST bootstrap@example\n",
+                VALID_PUBLIC_KEY + "\n",
                 (data / "dropbear" / "authorized_keys").read_text(),
             )
             app_start = (feeder / "app_start.sh").read_text()
             self.assertIn("-p 2222 -s", app_start)
+            self.assertNotIn("pidof dropbear", app_start)
+            self.assertIn("/proc/$dropbear_pid/cmdline", app_start)
             self.assertNotIn("telnet", app_start)
+            self.assertTrue((data / "dropbear" / "dropbear").is_symlink())
+            self.assertEqual(
+                "dropbearmulti", os.readlink(data / "dropbear" / "dropbear")
+            )
+            self.assertEqual(
+                "Dropbear license\n",
+                (data / "dropbear" / "LICENSE.dropbear").read_text(),
+            )
+            self.assertEqual(
+                "{}\n",
+                (data / "dropbear" / "BUILD_INFO.dropbear.json").read_text(),
+            )
 
     def _assert_successful_install(self, feeder: Path, donor: bytes) -> None:
         self.assertEqual(donor, (feeder / "ota1" / "AF203_FW").read_bytes())
@@ -125,6 +147,15 @@ class PayloadTests(unittest.TestCase):
             (feeder / "data" / "plaf203-bootstrap" / "status").read_text(),
         )
 
+    def test_state_agent_startup_matches_only_its_runsvdir_tree(self) -> None:
+        snippet = (
+            Path(__file__).resolve().parents[2]
+            / "state-agent"
+            / "app_start_snippet.sh"
+        ).read_text()
+        self.assertNotIn("pidof runsvdir", snippet)
+        self.assertIn("runsvdir_for_tree_running", snippet)
+
     def test_installer_rejects_unknown_test_slot_without_touching_startup(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             temp = Path(raw)
@@ -135,6 +166,8 @@ class PayloadTests(unittest.TestCase):
                 state_agent_dir=agent,
                 home_assistant_ip="192.0.2.25",
                 state_agent_token="a" * 64,
+                ssh_public_key=VALID_PUBLIC_KEY,
+                dropbear_dir=self._dropbear_tree(temp),
             )
             feeder = temp / "feeder"
             (feeder / "ota1").mkdir(parents=True)
@@ -170,6 +203,8 @@ class PayloadTests(unittest.TestCase):
                 state_agent_dir=self._state_agent_tree(temp),
                 home_assistant_ip="192.0.2.25",
                 state_agent_token="a" * 64,
+                ssh_public_key=VALID_PUBLIC_KEY,
+                dropbear_dir=self._dropbear_tree(temp),
             )
             feeder = temp / "feeder"
             (feeder / "ota1").mkdir(parents=True)
@@ -210,16 +245,17 @@ class PayloadTests(unittest.TestCase):
                 (feeder / "data" / "plaf203-bootstrap" / "status").read_text(),
             )
 
-    def test_ssh_requires_dropbear_bundle(self) -> None:
+    def test_ssh_key_is_mandatory(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             temp = Path(raw)
-            with self.assertRaisesRegex(ValueError, "dropbear_dir"):
+            with self.assertRaisesRegex(ValueError, "SSH public key is required"):
                 build_payload(
                     output=temp / "payload",
                     state_agent_dir=self._state_agent_tree(temp),
                     home_assistant_ip="192.0.2.25",
-                    state_agent_token="token",
-                    ssh_public_key="ssh-ed25519 AAAATEST user@example",
+                    state_agent_token="a" * 64,
+                    ssh_public_key="",
+                    dropbear_dir=self._dropbear_tree(temp),
                 )
 
     def test_state_agent_template_must_contain_expected_allowlist(self) -> None:
@@ -233,7 +269,9 @@ class PayloadTests(unittest.TestCase):
                     output=temp / "payload",
                     state_agent_dir=agent,
                     home_assistant_ip="192.0.2.25",
-                    state_agent_token="token",
+                    state_agent_token="a" * 64,
+                    ssh_public_key=VALID_PUBLIC_KEY,
+                    dropbear_dir=self._dropbear_tree(temp),
                 )
 
     def test_template_address_is_itself_a_valid_allowlist(self) -> None:
@@ -246,10 +284,33 @@ class PayloadTests(unittest.TestCase):
                 output=output,
                 state_agent_dir=state_agent,
                 home_assistant_ip="192.0.2.10",
-                state_agent_token="token",
+                state_agent_token="a" * 64,
+                ssh_public_key=VALID_PUBLIC_KEY,
+                dropbear_dir=self._dropbear_tree(root),
             )
 
             self.assertTrue(output.is_file())
+
+    def test_rejects_malformed_public_key_blob(self) -> None:
+        with self.assertRaisesRegex(ValueError, "base64"):
+            validate_public_key("ssh-ed25519 not-base64 user@example")
+
+    def test_rejects_public_key_type_mismatch(self) -> None:
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            validate_public_key(VALID_PUBLIC_KEY.replace("ssh-ed25519", "ssh-rsa", 1))
+
+    def test_rejects_invalid_state_agent_token_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            with self.assertRaisesRegex(ValueError, "64 lowercase hexadecimal"):
+                build_payload(
+                    output=root / "payload",
+                    state_agent_dir=self._state_agent_tree(root),
+                    home_assistant_ip="192.0.2.25",
+                    state_agent_token="not-a-token",
+                    ssh_public_key=VALID_PUBLIC_KEY,
+                    dropbear_dir=self._dropbear_tree(root),
+                )
 
 
 if __name__ == "__main__":

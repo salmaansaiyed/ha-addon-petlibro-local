@@ -4,17 +4,13 @@
   "home_assistant_ip": "192.168.1.10",
   "feeder_mqtt_host": "192.168.1.10",
   "feeder_mqtt_port": 1883,
-  "feeder_mqtt_member_id": "1",
-  "backend_mqtt_host": "core-mosquitto",
   "backend_mqtt_port": 1883,
   "backend_mqtt_username": "petlibro_backend",
   "backend_mqtt_password": "CHANGE_ME",
-  "bootstrap_mqtt_port": 1884,
+  "bootstrap_mqtt_port": 1883,
   "bootstrap_http_port": 18080,
-  "state_agent_manifest_url": "",
   "state_agent_dir": "./state-agent",
-  "dropbear_dir": "",
-  "ssh_public_key": "",
+  "ssh_public_key": "ssh-ed25519 AAAA... user@example",
   "target_software_version": "",
-  "output_dir": "./plaf203-bootstrap-output"
+  "output_dir": "build/bootstrap/output"
 }

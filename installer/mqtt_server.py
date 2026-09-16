@@ -1,9 +1,10 @@
-"""Single-device MQTT 3.1.1 server used only during OTA bootstrap."""
+"""Single-device MQTT 3.1/3.1.1 server used only during OTA bootstrap."""
 
 from __future__ import annotations
 
 import dataclasses
 import json
+import secrets
 import socket
 import socketserver
 import struct
@@ -110,6 +111,7 @@ class CapturedIdentity:
     username: str
     password: bytes
     peer_ip: str
+    protocol_level: int = 4
 
 
 class BootstrapSession:
@@ -134,6 +136,7 @@ class _Handler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         server: BootstrapMqttServer = self.server  # type: ignore[assignment]
         peer_ip = str(self.client_address[0])
+        server._record_connection_attempt(peer_ip)
         if server.expected_feeder_ip and peer_ip != server.expected_feeder_ip:
             server.report(f"Rejected MQTT connection from unexpected host {peer_ip}")
             return
@@ -150,13 +153,20 @@ class _Handler(socketserver.BaseRequestHandler):
                 connection.username,
                 connection.password,
                 peer_ip,
+                connection.protocol_level,
             )
             session.connection_generation = server._set_identity(identity)
             session.send(build_connack())
+            protocol_name = "3.1" if connection.protocol_level == 3 else "3.1.1"
+            server.report(
+                "Accepted feeder MQTT CONNECT and sent CONNACK "
+                f"(protocol {protocol_name})"
+            )
             server._set_session(session)
             while True:
                 packet = recv_packet(self.request)
                 if not packet:
+                    server.report("Feeder closed the bootstrap MQTT connection")
                     return
                 packet_type = packet[0] >> 4
                 if packet_type == 3:
@@ -182,8 +192,10 @@ class _Handler(socketserver.BaseRequestHandler):
                             session, struct.unpack("!H", packet[2:])[0]
                         )
                 elif packet_type == 14:  # DISCONNECT
+                    server.report("Feeder sent MQTT DISCONNECT")
                     return
         except (OSError, ProtocolError) as err:
+            server._record_session_error(str(err))
             server.report(f"Bootstrap MQTT session ended: {err}")
         finally:
             server._clear_session(session)
@@ -221,6 +233,20 @@ class BootstrapMqttServer(socketserver.ThreadingTCPServer):
         self._ota_msg_id: str | None = None
         self._pending_event_responses: list[tuple[BootstrapSession, str, bytes]] = []
         self.publications: list[tuple[str, bytes]] = []
+        self.connection_attempts = 0
+        self.last_connection_peer: str | None = None
+        self.last_session_error: str | None = None
+
+    def _record_connection_attempt(self, peer_ip: str) -> None:
+        with self._lock:
+            self.connection_attempts += 1
+            self.last_connection_peer = peer_ip
+            attempt = self.connection_attempts
+        self.report(f"Accepted bootstrap TCP connection #{attempt} from {peer_ip}")
+
+    def _record_session_error(self, message: str) -> None:
+        with self._lock:
+            self.last_session_error = message
 
     def _set_identity(self, identity: CapturedIdentity) -> int:
         with self._lock:
@@ -286,6 +312,8 @@ class BootstrapMqttServer(socketserver.ThreadingTCPServer):
             return
 
         command = value.get("cmd")
+        if isinstance(command, str):
+            self.report(f"Feeder published {command} on {topic}")
         if topic.endswith("/device/ntp/post") and command == "NTP":
             response_topic = topic[:-4] + "sub"
             self._queue_or_publish_application_response(
@@ -401,7 +429,14 @@ def probe_mqtt_credentials(
     """Verify that the final broker accepts the captured feeder credentials."""
 
     flags = 0xC2  # username, password, clean session
-    variable = b"\x00\x04MQTT\x04" + bytes((flags,)) + b"\x00\x0a"
+    protocol_level = getattr(identity, "protocol_level", 4)
+    if protocol_level == 3:
+        protocol = b"\x00\x06MQIsdp\x03"
+    elif protocol_level == 4:
+        protocol = b"\x00\x04MQTT\x04"
+    else:  # CapturedIdentity should make this unreachable.
+        raise ValueError(f"unsupported captured MQTT protocol level {protocol_level}")
+    variable = protocol + bytes((flags,)) + b"\x00\x0a"
     payload = (
         encode_utf8(identity.client_id)
         + encode_utf8(identity.username)
@@ -415,3 +450,76 @@ def probe_mqtt_credentials(
     if len(response) != 4 or response[:3] != b"\x20\x02\x00" or response[3] != 0:
         code = response[3] if len(response) == 4 else "malformed"
         raise PermissionError(f"final broker rejected feeder credentials (CONNACK {code})")
+
+
+def _build_client_connect(client_id: str, username: str, password: str) -> bytes:
+    variable = b"\x00\x04MQTT\x04" + bytes((0xC2,)) + b"\x00\x5a"
+    payload = encode_utf8(client_id) + encode_utf8(username) + encode_utf8(password)
+    return b"\x10" + encode_remaining_length(len(variable) + len(payload)) + variable + payload
+
+
+def _build_subscribe(topic: str, packet_id: int = 1) -> bytes:
+    body = struct.pack("!H", packet_id) + encode_utf8(topic) + b"\x00"
+    return b"\x82" + encode_remaining_length(len(body)) + body
+
+
+def wait_for_mqtt_heartbeat(
+    *,
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    feeder_client_id: str,
+    timeout: float,
+    on_subscribed: Callable[[], None],
+) -> None:
+    """Subscribe with the configured backend account and await a live feeder heartbeat."""
+
+    if timeout <= 0:
+        raise ValueError("heartbeat timeout must be positive")
+    if not feeder_client_id or any(
+        character in feeder_client_id for character in ("/", "+", "#", "\x00")
+    ):
+        raise ValueError("feeder MQTT client ID cannot be used in an exact topic subscription")
+    topic = f"dl/PLAF203/{feeder_client_id}/device/heart/post"
+    observer_id = "plaf203-bootstrap-" + secrets.token_hex(8)
+    deadline = time.monotonic() + timeout
+    with socket.create_connection((host, port), timeout=min(timeout, 10.0)) as connection:
+        connection.settimeout(max(0.1, deadline - time.monotonic()))
+        connection.sendall(_build_client_connect(observer_id, username, password))
+        connack = recv_packet(connection)
+        if len(connack) != 4 or connack[:3] != b"\x20\x02\x00" or connack[3] != 0:
+            code = connack[3] if len(connack) == 4 else "malformed"
+            raise PermissionError(
+                f"final broker rejected configured backend credentials (CONNACK {code})"
+            )
+
+        connection.sendall(_build_subscribe(topic))
+        suback = recv_packet(connection)
+        if suback != b"\x90\x03\x00\x01\x00":
+            raise PermissionError("final broker rejected the feeder heartbeat subscription")
+
+        on_subscribed()
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("timed out waiting for the feeder heartbeat")
+            connection.settimeout(remaining)
+            packet = recv_packet(connection)
+            if not packet:
+                raise ConnectionError("final broker closed the heartbeat observer connection")
+            packet_type = packet[0] >> 4
+            if packet_type == 3:
+                publication = parse_publish(packet)
+                if publication.qos == 1 and publication.packet_id is not None:
+                    connection.sendall(build_puback(publication.packet_id))
+                if publication.topic != topic or packet[0] & 0x01:
+                    continue
+                try:
+                    document = json.loads(publication.payload)
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+                if isinstance(document, dict) and document.get("cmd") == "HEARTBEAT":
+                    return
+            elif packet_type == 13:  # PINGRESP
+                continue

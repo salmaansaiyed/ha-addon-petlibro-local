@@ -1,10 +1,25 @@
 from __future__ import annotations
 
 import json
+import socket
+import threading
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from installer.mqtt_server import BootstrapMqttServer
-from installer.protocol import MqttConnect, build_ota_command
+from installer.mqtt_server import (
+    BootstrapMqttServer,
+    probe_mqtt_credentials,
+    recv_packet,
+    wait_for_mqtt_heartbeat,
+)
+from installer.protocol import (
+    MqttConnect,
+    build_ota_command,
+    build_publish,
+    encode_remaining_length,
+    encode_utf8,
+)
 
 
 class FakeSession:
@@ -24,6 +39,127 @@ class BootstrapMqttServerTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.server.server_close()
+
+    def test_accepts_stock_legacy_mqtt_31_connect(self) -> None:
+        thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            flags = 0xC2
+            variable = b"\x00\x06MQIsdp\x03" + bytes((flags,)) + b"\x00\x3c"
+            payload = encode_utf8("SERIAL") + encode_utf8("user") + encode_utf8(b"password")
+            packet = b"\x10" + encode_remaining_length(len(variable + payload)) + variable + payload
+            with socket.create_connection(self.server.server_address, timeout=1) as connection:
+                connection.sendall(packet)
+                self.assertEqual(b"\x20\x02\x00\x00", recv_packet(connection))
+
+            self.assertTrue(self.server.identity_ready.wait(1))
+            assert self.server.identity is not None
+            self.assertEqual(3, self.server.identity.protocol_level)
+            self.assertEqual(1, self.server.connection_attempts)
+            self.assertIsNone(self.server.last_session_error)
+        finally:
+            self.server.shutdown()
+            thread.join(timeout=1)
+
+    def test_final_broker_probe_uses_captured_legacy_protocol(self) -> None:
+        class FakeConnection:
+            def __init__(self) -> None:
+                self.response = bytearray(b"\x20\x02\x00\x00")
+                self.sent = b""
+
+            def __enter__(self) -> "FakeConnection":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def settimeout(self, _timeout: float) -> None:
+                return None
+
+            def sendall(self, packet: bytes) -> None:
+                self.sent += packet
+
+            def recv(self, size: int) -> bytes:
+                result = bytes(self.response[:size])
+                del self.response[:size]
+                return result
+
+        connection = FakeConnection()
+        identity = SimpleNamespace(
+            client_id="SERIAL",
+            username="user",
+            password=b"password",
+            protocol_level=3,
+        )
+        with patch("installer.mqtt_server.socket.create_connection", return_value=connection):
+            probe_mqtt_credentials("192.0.2.10", 1883, identity)
+
+        self.assertIn(b"\x00\x06MQIsdp\x03", connection.sent)
+        self.assertNotIn(b"\x00\x04MQTT\x04", connection.sent)
+
+    def test_final_broker_observer_waits_for_exact_live_heartbeat(self) -> None:
+        topic = "dl/PLAF203/AF0301/device/heart/post"
+
+        class FakeConnection:
+            def __init__(self) -> None:
+                self.response = bytearray(
+                    b"\x20\x02\x00\x00"
+                    + b"\x90\x03\x00\x01\x00"
+                    + build_publish(
+                        "dl/PLAF203/OTHER/device/heart/post",
+                        b'{"cmd":"HEARTBEAT"}',
+                        qos=0,
+                    )
+                    + build_publish(topic, b'{"cmd":"HEARTBEAT"}', qos=1, packet_id=7)
+                )
+                self.sent = bytearray()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def settimeout(self, _timeout):
+                return None
+
+            def sendall(self, packet):
+                self.sent.extend(packet)
+
+            def recv(self, size):
+                result = bytes(self.response[:size])
+                del self.response[:size]
+                return result
+
+        connection = FakeConnection()
+        subscribed = []
+        with patch("installer.mqtt_server.socket.create_connection", return_value=connection):
+            wait_for_mqtt_heartbeat(
+                host="192.0.2.10",
+                port=1883,
+                username="backend",
+                password="secret",
+                feeder_client_id="AF0301",
+                timeout=1,
+                on_subscribed=lambda: subscribed.append(True),
+            )
+
+        self.assertEqual([True], subscribed)
+        self.assertIn(encode_utf8("backend"), connection.sent)
+        self.assertIn(encode_utf8(topic), connection.sent)
+        self.assertIn(b"\x40\x02\x00\x07", connection.sent)
+
+    def test_final_broker_observer_rejects_topic_wildcards_in_client_id(self) -> None:
+        with self.assertRaisesRegex(ValueError, "exact topic"):
+            wait_for_mqtt_heartbeat(
+                host="192.0.2.10",
+                port=1883,
+                username="backend",
+                password="secret",
+                feeder_client_id="AF/#",
+                timeout=1,
+                on_subscribed=lambda: None,
+            )
 
     def test_start_event_records_version_and_gets_correlated_qos0_response(self) -> None:
         post = "dl/PLAF203/SERIAL/device/event/post"
