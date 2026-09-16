@@ -25,6 +25,17 @@ class RenderConfigTests(unittest.TestCase):
         self.assertIn("image: ghcr.io/tannerln7/ha-addon-petlibro-local\n", manifest)
         self.assertIn("arch:\n  - amd64\n", manifest)
 
+    def test_state_agent_manifest_default_matches_signed_release_feed(self):
+        expected = (
+            "https://raw.githubusercontent.com/tannerln7/ha-addon-petlibro-local/"
+            "state-agent-releases/state-agent/latest.json"
+        )
+        self.assertEqual(
+            expected,
+            render_config.DEFAULTS["state_agent_updates"]["manifest_url"],
+        )
+        self.assertIn(f"manifest_url: {expected}", (ROOT / "config.yaml").read_text())
+
     def test_generated_apps_do_not_override_appdaemon_log_level(self):
         with tempfile.TemporaryDirectory() as temporary:
             data_dir = Path(temporary)
@@ -268,6 +279,14 @@ class RenderConfigTests(unittest.TestCase):
             "manifest_url": "http://example.invalid/latest.json",
         }
         with self.assertRaisesRegex(ValueError, "HTTPS"):
+            render_config.validate(options)
+
+        options = self.options()
+        options["state_agent_updates"] = {
+            "enabled": True,
+            "manifest_url": "https://example.invalid/latest.json?channel=stable",
+        }
+        with self.assertRaisesRegex(ValueError, "query"):
             render_config.validate(options)
 
         options = self.options()

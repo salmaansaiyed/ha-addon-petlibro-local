@@ -124,11 +124,15 @@ class StateAgentUpdateOptions:
                 "state_agent_updates.manifest_url is required when updates are enabled"
             )
         if manifest_url:
-            _validate_https_url(
+            parsed_manifest_url = _validate_https_url(
                 manifest_url,
                 field_name="state_agent_updates.manifest_url",
                 immutable_only=False,
             )
+            if parsed_manifest_url.query:
+                raise ValueError(
+                    "state_agent_updates.manifest_url must not include query parameters"
+                )
         return cls(
             enabled=enabled,
             manifest_url=manifest_url,
@@ -253,6 +257,8 @@ class UpdateStateSnapshot:
         }
         if self.release_url:
             payload["release_url"] = self.release_url
+        if self.last_error:
+            payload["last_error"] = self.last_error
         return payload
 
 
@@ -444,6 +450,7 @@ class StateAgentUpdateCoordinator:
     def _poll_update_status(self, _kwargs: dict[str, object]) -> None:
         self._status_poll_timer = None
         if self._busy:
+            self._schedule_status_poll()
             return
         self._busy = True
 
@@ -457,18 +464,44 @@ class StateAgentUpdateCoordinator:
 
     def _on_status_poll_finished(self, *, result: object) -> None:
         self._busy = False
-        snapshot = self._extract_result(result)
-        if snapshot is None:
-            self._set_in_progress(False)
+        if isinstance(result, Exception):
+            self.logger.warning(
+                "state-agent update status temporarily unavailable",
+                error_type=type(result).__name__,
+            )
+            self._continue_status_poll_or_timeout()
             return
+        if not isinstance(result, UpdateStateSnapshot):
+            self.logger.warning(
+                "state-agent update status returned an unexpected result"
+            )
+            self._continue_status_poll_or_timeout()
+            return
+        snapshot = result
         self._latest_state = snapshot
         self._publish_state()
-        if (
-            snapshot.in_progress
-            and self._status_poll_attempts < STATUS_POLL_MAX_ATTEMPTS
-        ):
-            self._status_poll_attempts += 1
+        if snapshot.in_progress:
+            self._continue_status_poll_or_timeout()
+        else:
+            self._status_poll_attempts = 0
+
+    def _continue_status_poll_or_timeout(self) -> None:
+        self._status_poll_attempts += 1
+        if self._status_poll_attempts < STATUS_POLL_MAX_ATTEMPTS:
             self._schedule_status_poll()
+            return
+        self._latest_state = UpdateStateSnapshot(
+            installed_version=self._latest_state.installed_version,
+            latest_version=self._latest_state.latest_version,
+            release_url=self._latest_state.release_url,
+            in_progress=False,
+            last_error="update status timed out",
+        )
+        self.logger.warning(
+            "state-agent update status polling timed out",
+            attempts=self._status_poll_attempts,
+        )
+        self._publish_state()
 
     def _extract_result(self, result: object) -> UpdateStateSnapshot | None:
         if isinstance(result, UpdateStateSnapshot):
@@ -495,7 +528,7 @@ class StateAgentUpdateCoordinator:
             latest_version=self._latest_state.latest_version,
             release_url=self._latest_state.release_url,
             in_progress=in_progress,
-            last_error=self._latest_state.last_error,
+            last_error="" if in_progress else self._latest_state.last_error,
         )
         self._publish_state()
 
@@ -554,13 +587,12 @@ class StateAgentUpdateCoordinator:
         submit_result = self.state_agent.submit_update(frame)
         if not submit_result.accepted:
             raise StateAgentBadResponse("state agent rejected update upload")
-        status = self._safe_update_status()
         return UpdateStateSnapshot(
             installed_version=installed_version,
             latest_version=bundle.manifest.version,
             release_url=bundle.manifest.release_url,
-            in_progress=status.in_progress,
-            last_error=status.last_error,
+            in_progress=True,
+            last_error="",
         )
 
     def _safe_update_status(self) -> StateAgentUpdateStatus:
@@ -575,7 +607,7 @@ class StateAgentUpdateCoordinator:
             )
 
     def _poll_feeder_update_status(self) -> UpdateStateSnapshot:
-        status = self._safe_update_status()
+        status = self.state_agent.update_status()
         installed_version = self._latest_state.installed_version
         if not status.in_progress:
             installed_version = self.state_agent.version().version

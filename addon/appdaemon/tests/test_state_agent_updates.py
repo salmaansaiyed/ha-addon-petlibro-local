@@ -236,6 +236,7 @@ class _FakeAgent:
     def __init__(self, version="1.0.0"):
         self.update_payloads = []
         self.installed_version = version
+        self.status_calls = 0
 
     class _Version:
         def __init__(self, version):
@@ -263,11 +264,29 @@ class _FakeAgent:
         return self._Version(self.installed_version)
 
     def update_status(self):
+        self.status_calls += 1
         return self._Status(in_progress=False)
 
     def submit_update(self, payload: bytes):
         self.update_payloads.append(payload)
         return self._Submit()
+
+
+def _coordinator(tmp_path: Path, *, agent=None):
+    key = Ed25519PrivateKey.generate()
+    key_path = tmp_path / "release-key.hex"
+    key_path.write_text(key.public_key().public_bytes_raw().hex(), encoding="utf-8")
+    return StateAgentUpdateCoordinator(
+        _FakeAD(),
+        _FakeStatePublisher(),
+        agent or _FakeAgent(),
+        _FakeLogger(),
+        StateAgentUpdateOptions(
+            enabled=True,
+            manifest_url="https://updates.example.invalid/latest.json",
+        ),
+        public_key_path=str(key_path),
+    )
 
 
 def test_coordinator_throttle_and_force(monkeypatch, tmp_path: Path):
@@ -316,10 +335,11 @@ def test_coordinator_throttle_and_force(monkeypatch, tmp_path: Path):
         or b"agent",
     )
 
+    agent = _FakeAgent()
     coordinator = StateAgentUpdateCoordinator(
         _FakeAD(),
         _FakeStatePublisher(),
-        _FakeAgent(),
+        agent,
         _FakeLogger(),
         StateAgentUpdateOptions(
             enabled=True,
@@ -339,6 +359,8 @@ def test_coordinator_throttle_and_force(monkeypatch, tmp_path: Path):
     assert calls["install"] == 1
     assert len(coordinator.state_agent.update_payloads) == 1
     assert coordinator.state_agent.update_payloads[0][:8] == b"PLAFOTA1"
+    assert coordinator._latest_state.in_progress is True
+    assert agent.status_calls == 2  # update checks only; accepted upload starts polling later
 
 
 def test_status_poll_queries_only_the_feeder(monkeypatch, tmp_path: Path):
@@ -376,6 +398,59 @@ def test_status_poll_queries_only_the_feeder(monkeypatch, tmp_path: Path):
 
     assert coordinator._latest_state.in_progress is True
     assert coordinator._latest_state.latest_version == "1.2.3"
+
+
+def test_status_poll_error_preserves_progress_and_retries(tmp_path: Path):
+    coordinator = _coordinator(tmp_path)
+    coordinator._latest_state = UpdateStateSnapshot(
+        installed_version="1.0.0",
+        latest_version="1.2.3",
+        release_url="https://example.invalid/releases/1.2.3",
+        in_progress=True,
+    )
+
+    coordinator._on_status_poll_finished(result=RuntimeError("agent restarting"))
+
+    assert coordinator._latest_state.in_progress is True
+    assert coordinator._status_poll_attempts == 1
+    assert len(coordinator.ad.timers) == 1
+
+
+def test_busy_status_poll_is_rescheduled_instead_of_dropped(tmp_path: Path):
+    coordinator = _coordinator(tmp_path)
+    coordinator._busy = True
+
+    coordinator._poll_update_status({})
+
+    assert coordinator.ad.executor_calls == 0
+    assert len(coordinator.ad.timers) == 1
+
+
+def test_status_poll_exhaustion_publishes_terminal_timeout(tmp_path: Path):
+    coordinator = _coordinator(tmp_path)
+    coordinator._latest_state = UpdateStateSnapshot(
+        installed_version="1.0.0",
+        latest_version="1.2.3",
+        release_url="https://example.invalid/releases/1.2.3",
+        in_progress=True,
+    )
+    coordinator._status_poll_attempts = update_module.STATUS_POLL_MAX_ATTEMPTS - 1
+
+    coordinator._on_status_poll_finished(result=RuntimeError("still restarting"))
+
+    assert coordinator._latest_state.in_progress is False
+    assert coordinator._latest_state.last_error == "update status timed out"
+    assert coordinator.state.messages[-1][1]["last_error"] == "update status timed out"
+
+
+def test_manifest_option_rejects_query_parameters():
+    with pytest.raises(ValueError, match="query"):
+        StateAgentUpdateOptions.from_mapping(
+            {
+                "enabled": True,
+                "manifest_url": "https://updates.example.invalid/latest.json?channel=stable",
+            }
+        )
 
 
 @pytest.mark.parametrize(

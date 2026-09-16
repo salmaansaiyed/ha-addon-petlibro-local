@@ -38,7 +38,7 @@ options:
   petlibro_state_agent_timeout_seconds: 2
   state_agent_updates:
     enabled: false
-    manifest_url: ""
+    manifest_url: https://raw.githubusercontent.com/tannerln7/ha-addon-petlibro-local/state-agent-releases/state-agent/latest.json
     check_on_connect: true
     check_interval_hours: 24
   device_discovery: true

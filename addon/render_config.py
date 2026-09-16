@@ -14,6 +14,11 @@ from pathlib import Path
 from string import Template
 from urllib.parse import urlencode, urlsplit
 
+DEFAULT_STATE_AGENT_MANIFEST_URL = (
+    "https://raw.githubusercontent.com/tannerln7/ha-addon-petlibro-local/"
+    "state-agent-releases/state-agent/latest.json"
+)
+
 DEFAULTS = {
     "mqtt_host": "core-mosquitto",
     "mqtt_port": 1883,
@@ -29,7 +34,7 @@ DEFAULTS = {
     "petlibro_state_agent_timeout_seconds": 2,
     "state_agent_updates": {
         "enabled": False,
-        "manifest_url": "",
+        "manifest_url": DEFAULT_STATE_AGENT_MANIFEST_URL,
         "check_on_connect": True,
         "check_interval_hours": 24,
     },
@@ -223,10 +228,11 @@ def validate(options: dict[str, object]) -> None:
             or not parsed_manifest_url.hostname
             or parsed_manifest_url.username
             or parsed_manifest_url.password
+            or parsed_manifest_url.query
             or parsed_manifest_url.fragment
         ):
             raise ValueError(
-                "state_agent_updates.manifest_url must be an HTTPS URL without credentials or fragment"
+                "state_agent_updates.manifest_url must be an HTTPS URL without credentials, query, or fragment"
             )
     options["state_agent_updates"] = {
         "enabled": enabled,
