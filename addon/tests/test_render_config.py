@@ -19,11 +19,11 @@ SPEC.loader.exec_module(render_config)
 
 
 class RenderConfigTests(unittest.TestCase):
-    def test_addon_manifest_uses_prebuilt_amd64_image(self):
+    def test_addon_manifest_uses_prebuilt_multiarch_image(self):
         manifest = (ROOT / "config.yaml").read_text(encoding="utf-8")
 
         self.assertIn("image: ghcr.io/tannerln7/ha-addon-petlibro-local\n", manifest)
-        self.assertIn("arch:\n  - amd64\n", manifest)
+        self.assertIn("arch:\n  - amd64\n  - aarch64\n", manifest)
 
     def test_state_agent_manifest_default_matches_signed_release_feed(self):
         expected = (

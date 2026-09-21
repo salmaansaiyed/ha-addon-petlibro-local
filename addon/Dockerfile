@@ -1,6 +1,10 @@
+ARG TARGETARCH
 ARG GO_VERSION=1.26.5
-FROM golang:${GO_VERSION}-alpine3.23 AS go2rtc-builder
+# Build the Go binaries on the NATIVE builder arch and cross-compile to the
+# target. go2rtc is CGO_ENABLED=0 pure Go, so this needs no emulation at all.
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine3.23 AS go2rtc-builder
 
+ARG TARGETARCH
 ARG GO_BUILD_PROCS=""
 
 WORKDIR /src/go2rtc
@@ -13,14 +17,21 @@ RUN set -eu; \
         export GOMAXPROCS="${GO_BUILD_PROCS}"; \
         set -- "-p=${GO_BUILD_PROCS}"; \
     fi; \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH}" \
         go build "$@" -trimpath -ldflags="-s -w" -o /out/go2rtc .; \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH}" \
         go build "$@" -trimpath -ldflags="-s -w" -o /out/petlibro-resolve ./cmd/petlibro-resolve
 
-FROM ghcr.io/home-assistant/amd64-base-python:3.13-alpine3.23
+# Home Assistant names its bases amd64/aarch64; Docker's TARGETARCH is
+# amd64/arm64. A build-arg cannot differ per platform inside one multi-arch
+# build, so map the two with stage aliases instead.
+FROM ghcr.io/home-assistant/amd64-base-python:3.13-alpine3.23 AS runtime-amd64
+FROM ghcr.io/home-assistant/aarch64-base-python:3.13-alpine3.23 AS runtime-arm64
 
-ARG BUILD_ARCH=amd64
+FROM runtime-${TARGETARCH}
+
+ARG TARGETARCH
+ARG BUILD_ARCH=${TARGETARCH}
 ARG BUILD_VERSION=dev
 
 RUN apk add --no-cache ffmpeg jq \
