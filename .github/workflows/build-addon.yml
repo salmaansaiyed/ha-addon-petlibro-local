@@ -1,0 +1,57 @@
+name: Build add-on image
+
+# Publishes a multi-arch (amd64 + aarch64) image so the add-on installs on
+# Raspberry Pi hosts as well as x86. The Go stage cross-compiles on the native
+# runner arch, so only the small apk/pip layer needs emulation.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'addon/**'
+      - '.github/workflows/build-addon.yml'
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/ha-addon-petlibro-local
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read add-on version
+        id: meta
+        run: echo "version=$(yq '.version' addon/config.yaml)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (amd64 + aarch64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: addon/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          build-args: |
+            BUILD_VERSION=${{ steps.meta.outputs.version }}
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.meta.outputs.version }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
